@@ -6,12 +6,12 @@ Windows PC를 OAuth로 보호된 MCP 서버로 연결해 AI가 화면을 확인�
 
 ## 빠른 시작
 
-GitHub Releases에서 `Remote-MCP-Control-0.2.2-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
+GitHub Releases에서 `Remote-MCP-Control-0.2.3-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
 
 현재 포터블 빌드는 Authenticode 상용 코드서명이 없어 Windows SmartScreen에 알 수 없는 게시자 경고가 나타날 수 있습니다. 반드시 이 저장소의 Releases에서만 내려받고, 같은 릴리스의 `SHA256SUMS.txt`와 파일의 SHA-256 값을 비교하십시오. 값이 다르면 실행하지 마십시오. 이 경고를 없애려면 향후 신뢰할 수 있는 Windows 코드서명 인증서가 필요합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.2-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.3-x64.exe
 ```
 
 ```text
@@ -27,9 +27,12 @@ MCP-Remote-Control-Launcher.cmd
 - 실제 AI 입력 전에 표시되는 커스텀 포인터, 타깃, 안전 프레임, 키보드 개인정보 보호 HUD
 - 화면 중앙보다 약간 아래에 표시되는 작업 요약·진행률·대상·최근 실행 로그 HUD
 - 임시 HTTPS Quick Tunnel, 사설 LAN, 고정 Cloudflare Named Tunnel
+- 공개 HTTPS 연결을 유지하면서 이 PC의 LAN IPv4 주소도 함께 여는 하이브리드 IP 모드
 - `safe`, `agent`, `full` 로컬 제어 프로필
 
 외부 연결을 빠르게 시험하려면 **임시 HTTPS 시작**을 누릅니다. 고정 주소가 필요하면 **고정 도메인**에서 Named Tunnel을 구성한 뒤 **고정 도메인 시작**을 사용합니다.
+
+같은 공유기 안의 다른 PC에서도 이 서버를 써야 하면 **고정 도메인 → 하이브리드 IP 모드**를 켭니다. 서버는 `0.0.0.0:8787`에 수신하고 실행기가 현재 기본 네트워크의 IPv4를 감지해 `http://LAN-IP:8787/mcp`를 함께 표시·복사합니다. 공개 HTTPS URL과 OAuth 리소스는 그대로라 웹 ChatGPT 연결을 다시 등록하지 않아도 됩니다. 단, 다른 LAN 기기의 실제 접속은 Windows 네트워크 프로필과 방화벽 정책에 따라 차단될 수 있습니다.
 
 ## ChatGPT 커넥터 연결
 
@@ -86,7 +89,7 @@ Electron의 **권한 → AI 조작 HUD 미리보기**를 누르면 PC 입력을 
 2. 화면을 확인하고 관련 마우스·키보드 작업을 수행합니다.
 3. 마지막에 `desktop_control_release`를 호출합니다.
 
-다른 MCP 세션이 임대를 보유하면 입력을 섞지 않고 `desktop_control_busy` 의미의 명확한 오류를 반환합니다. 스크린샷과 읽기 전용 상태 확인은 임대 중에도 동시에 사용할 수 있습니다. 임대는 소유 세션이 종료되면 자동 해제되고, 입력할 때 갱신되며, 최대 10분 안에 만료됩니다. `desktop_control_status`로 현재 소유자 표시명, 목적, 만료 시각과 입력 대기열을 확인할 수 있으며 토큰 값은 반환하지 않습니다.
+임대 소유자는 일시적인 MCP 전송 세션이 아니라 인증된 OAuth 커넥터(또는 페어링 자격 증명)입니다. 따라서 ChatGPT가 도구 호출마다 새 MCP 세션을 만들어도 같은 커넥터는 재인증 없이 조작과 해제를 계속할 수 있습니다. 별도로 인증된 다른 ChatGPT·Codex·Claude 커넥터가 임대를 보유하면 입력을 섞지 않고 `desktop_control_busy` 의미의 명확한 오류를 반환합니다. 스크린샷과 읽기 전용 상태 확인은 임대 중에도 동시에 사용할 수 있습니다. 임대는 입력할 때 갱신되며 명시적으로 해제하지 않아도 최대 10분 안에 만료됩니다. `desktop_control_status`로 현재 소유자 표시명, 목적, 만료 시각과 입력 대기열을 확인할 수 있으며 토큰 값은 반환하지 않습니다.
 
 Codex·Claude·CLI 백그라운드 작업도 정규화된 작업 폴더를 예약합니다. 같은 폴더에서 두 에이전트가 동시에 파일을 수정하는 것은 거부됩니다. 병렬 편집이 필요하면 서로 다른 Git worktree를 만들고 각 에이전트에 별도 경로를 허용하십시오. 백그라운드 작업은 이를 시작한 커넥터 주체만 중지할 수 있습니다.
 
@@ -127,7 +130,9 @@ Quick Tunnel의 `trycloudflare.com` 호스트명은 재시작할 때 바뀝니�
 
 터널 실행 토큰은 현재 Windows 사용자의 보안 저장소로 암호화되며 UI나 로그에 평문으로 표시되지 않습니다. 기존 DNS 레코드는 자동 덮어쓰지 않습니다. 고정 주소의 최종 MCP URL은 `https://mcp.example.com/mcp`입니다.
 
-LAN 모드는 `http://LAN-IP:8787/mcp`를 제공합니다. 신뢰할 수 있는 사설망에서만 사용하고 관리자 PowerShell에서 `scripts\install-firewall.ps1`을 별도로 실행해야 합니다. ChatGPT 클라우드 커넥터에는 공개 HTTPS Named Tunnel을 사용하십시오.
+LAN 전용 모드는 `http://LAN-IP:8787/mcp`만 제공하고 공개 터널을 종료합니다. 하이브리드 IP 모드는 같은 LAN 주소와 기존 Quick/Named HTTPS 주소를 동시에 유지합니다. 신뢰할 수 있는 사설망에서만 IP 수신을 켜고, 다른 PC의 접속이 필요하면 네트워크를 Private으로 확인한 뒤 관리자 PowerShell에서 `scripts\install-firewall.ps1`을 별도로 실행하십시오. 이 스크립트는 TCP/8787을 Private 프로필의 LocalSubnet에만 엽니다.
+
+`192.168.x.x` 같은 사설 IP는 인터넷의 ChatGPT 클라우드가 직접 연결할 수 없습니다. 웹 ChatGPT에는 공개 HTTPS Named Tunnel을 쓰거나, 개발자 모드에서 OpenAI Secure MCP Tunnel을 별도로 구성해야 합니다. Secure MCP Tunnel은 Platform의 `tunnel_id`, 런타임 API 키, `tunnel-client`가 필요하며 공개 플러그인 배포용 URL을 대신하지 않습니다.
 
 ## 수동 실행
 

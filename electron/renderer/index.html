@@ -83,9 +83,15 @@
             <code id="mcpUrl">아직 생성된 MCP URL이 없습니다</code>
             <button id="inlineCopyUrl" aria-label="URL 복사">복사</button>
           </div>
+          <div class="url-strip lan-url-strip">
+            <span>THIS PC IP</span>
+            <code id="lanMcpUrl">하이브리드 IP 모드를 켜면 표시됩니다</code>
+            <button id="inlineCopyLanUrl" aria-label="LAN IP URL 복사">복사</button>
+          </div>
           <div class="command-buttons">
             <button class="primary-button" id="startQuick"><span class="button-led"></span>임시 HTTPS 시작</button>
             <button class="secondary-button" id="startNamed">고정 도메인 시작</button>
+            <button class="ghost-button" id="startLan">LAN 전용 시작</button>
             <button class="danger-button" id="stopServer">서버 종료</button>
           </div>
         </div>
@@ -186,11 +192,12 @@
         <div class="domain-layout">
           <div class="domain-explainer">
             <div class="domain-route">
-              <div><span>01</span><b>이 PC</b><small>127.0.0.1:8787</small></div><i></i>
+              <div><span>01</span><b>이 PC</b><small id="localOriginText">127.0.0.1:8787</small></div><i></i>
               <div><span>02</span><b>Named Tunnel</b><small>암호화 연결</small></div><i></i>
               <div><span>03</span><b>고정 URL</b><small id="savedDomainText">mcp.example.com</small></div>
             </div>
             <p>Cloudflare 계정에 활성화된 본인 도메인이 필요합니다. 앱이 Tunnel 생성, DNS 연결, 실행 토큰 암호화를 처리하며 기존 DNS 레코드는 덮어쓰지 않습니다.</p>
+            <label class="switch-row network-switch"><div><b>하이브리드 IP 모드</b><p>공개 HTTPS 연결은 유지하면서 같은 LAN에서는 이 PC의 IPv4 주소로도 MCP를 수신합니다. Windows 방화벽은 자동 변경하지 않습니다.</p></div><input id="lanDirectToggle" type="checkbox"><span class="switch"></span></label>
             <div class="cloudflare-status" id="cloudflareStatus"><span></span><b>Cloudflare 상태 확인 전</b></div>
             <div class="domain-action-row">
               <button class="secondary-button" id="checkCloudflare">계정 상태 확인</button>

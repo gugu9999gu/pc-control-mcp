@@ -197,6 +197,8 @@ body[data-server="online"] .state-chip span { background: var(--cyan); box-shado
 .url-strip span { color: #4f6f6b; font: 700 8px Consolas, monospace; letter-spacing: .12em; }
 .url-strip code { flex: 1; overflow: hidden; color: #9eb5b2; font: 11px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .url-strip button { color: var(--cyan); background: transparent; cursor: pointer; font-size: 10px; }
+.lan-url-strip { margin-top: -10px; border-color: rgba(139, 155, 255, .2); }
+.lan-url-strip span, .lan-url-strip button { color: var(--violet); }
 .telemetry-stack { display: grid; align-content: stretch; border-left: 1px solid var(--line); }
 .telemetry-card { display: flex; flex-direction: column; justify-content: center; padding: 18px; border-bottom: 1px solid var(--line); }
 .telemetry-card:last-child { border-bottom: 0; }
@@ -353,6 +355,7 @@ details label { margin: 12px 0; }
 .switch::before { content: ""; position: absolute; top: 3px; left: 3px; width: 13px; height: 13px; border-radius: 50%; background: #496461; transition: .2s ease; }
 .switch-row input:checked + .switch { border-color: rgba(69, 240, 204, .5); background: rgba(69, 240, 204, .1); }
 .switch-row input:checked + .switch::before { left: 21px; background: var(--cyan); box-shadow: 0 0 10px var(--cyan); }
+.network-switch { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .018); }
 .safety-strip { margin-top: 15px; padding: 10px; color: #66807d; background: rgba(255, 255, 255, .018); font-size: 9px; line-height: 1.5; }
 .safety-strip span { margin-right: 8px; color: var(--violet); font: 700 8px Consolas, monospace; }
 .hud-preview-button { margin-top: 16px; }

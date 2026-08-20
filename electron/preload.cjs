@@ -22,6 +22,7 @@ contextBridge.exposeInMainWorld('mcpApp', Object.freeze({
   createNamedTunnel: values => ipcRenderer.invoke('mcp:create-named-tunnel', values),
   saveNamedTunnel: values => ipcRenderer.invoke('mcp:save-named-tunnel', values),
   copyUrl: () => ipcRenderer.invoke('mcp:copy-url'),
+  copyLanUrl: () => ipcRenderer.invoke('mcp:copy-lan-url'),
   copyToken: () => ipcRenderer.invoke('mcp:copy-token'),
   openChatGpt: () => ipcRenderer.invoke('mcp:open-chatgpt'),
   openDataFolder: () => ipcRenderer.invoke('mcp:open-data-folder'),

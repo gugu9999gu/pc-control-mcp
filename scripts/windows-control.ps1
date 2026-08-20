@@ -391,9 +391,16 @@ switch ($Action) {
     }
     'hotkey' {
         if (-not $KeysJson) { throw 'Keys are required.' }
-        $keys = @($KeysJson | ConvertFrom-Json)
+        # Windows PowerShell 5.1 can preserve a JSON array as one nested
+        # pipeline object. Casting that object to string produces values such
+        # as "ALT SPACE", which then fail key lookup. Enumerate the parsed
+        # array explicitly so every chord key is handled independently.
+        $parsedKeys = ConvertFrom-Json -InputObject $KeysJson
+        $keys = @()
+        foreach ($parsedKey in $parsedKeys) { $keys += [string]$parsedKey }
         $virtualKeys = @{
             CTRL = 0x11; CONTROL = 0x11; ALT = 0x12; SHIFT = 0x10
+            WIN = 0x5B; WINDOWS = 0x5B; META = 0x5B
             ENTER = 0x0D; ESC = 0x1B; TAB = 0x09; SPACE = 0x20; BACKSPACE = 0x08
             DELETE = 0x2E; INSERT = 0x2D; HOME = 0x24; END = 0x23; PAGEUP = 0x21; PAGEDOWN = 0x22
             UP = 0x26; DOWN = 0x28; LEFT = 0x25; RIGHT = 0x27

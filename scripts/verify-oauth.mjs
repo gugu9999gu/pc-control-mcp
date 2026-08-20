@@ -252,15 +252,15 @@ if (process.env.VERIFY_COORDINATION === '1' && capabilities.profile !== 'safe' &
     purpose: 'OAuth multi-agent coordination verification', ttl_seconds: 30, wait_seconds: 0
   }));
   assert(ownerLease.acquired === true, 'first MCP session did not acquire desktop control');
-  const peerDenied = await callToolRaw(402, 'desktop_control_acquire', {
-    purpose: 'must not interleave', ttl_seconds: 30, wait_seconds: 0
-  }, peerSessionId);
-  assert(peerDenied?.isError, 'second MCP session unexpectedly acquired an active desktop lease');
+  const peerLease = toolJson(await callTool(402, 'desktop_control_acquire', {
+    purpose: 'same OAuth connector continuation', ttl_seconds: 30, wait_seconds: 0
+  }, peerSessionId));
+  assert(peerLease.acquired === true, 'same OAuth connector did not continue its lease across MCP sessions');
   const peerStatus = toolJson(await callTool(403, 'desktop_control_status', {}, peerSessionId));
-  assert(peerStatus.state === 'leased' && peerStatus.owned_by_requester === false, 'peer session did not observe the active lease');
-  assert(toolJson(await callTool(404, 'desktop_control_release')).released === true, 'owner session did not release its lease');
+  assert(peerStatus.state === 'leased' && peerStatus.owned_by_requester === true, 'stateless MCP session did not inherit its connector lease');
+  assert(toolJson(await callTool(404, 'desktop_control_release', {}, peerSessionId)).released === true, 'connector did not release its lease from a later MCP session');
   assert(toolJson(await callTool(405, 'desktop_control_acquire', {
-    purpose: 'peer handoff verification', ttl_seconds: 30, wait_seconds: 0
+    purpose: 'connector reacquire verification', ttl_seconds: 30, wait_seconds: 0
   }, peerSessionId)).acquired === true, 'peer session did not acquire after handoff');
   assert(toolJson(await callTool(406, 'desktop_control_release', {}, peerSessionId)).released === true, 'peer session did not release its lease');
   let sameWorkspaceBlocked = null;
@@ -278,8 +278,8 @@ if (process.env.VERIFY_COORDINATION === '1' && capabilities.profile !== 'safe' &
   }
   coordinationVerification = {
     sessions: 2,
-    overlap_blocked: true,
-    handoff_succeeded: true,
+    same_connector_continuity: true,
+    explicit_release_succeeded: true,
     same_workspace_background_job_blocked: sameWorkspaceBlocked
   };
 }

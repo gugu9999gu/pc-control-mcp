@@ -112,15 +112,16 @@ function updateStatus(status) {
   state.status = status;
   const online = Boolean(status.server?.running);
   document.body.dataset.server = online ? 'online' : 'offline';
-  $('#appVersion').textContent = `v${status.appVersion || '0.2.2'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
+  $('#appVersion').textContent = `v${status.appVersion || '0.2.3'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
   $('#sideServerState').textContent = online ? 'ONLINE' : status.server?.processDetected ? 'STARTING' : 'OFFLINE';
   $('#heroState').textContent = online ? 'MCP CORE ONLINE' : status.server?.processDetected ? 'MCP CORE STARTING' : 'MCP CORE OFFLINE';
   $('#heroTitle').textContent = online ? '이 PC가 AI 도구 호출을 수신 중입니다' : '서버가 대기 중입니다';
   $('#heroDescription').textContent = online
-    ? `${modeLabel(status.mode)} 모드 · 로컬 OAuth 및 도구 권한 정책이 적용되고 있습니다.`
+    ? `${modeLabel(status.mode)} 모드 · OAuth 및 도구 권한 정책 적용${status.settings?.lanDirectEnabled ? ' · LAN IP 병행 수신' : ''}.`
     : '실행 방식을 선택하면 OAuth 보호 MCP 서버와 외부 터널을 함께 시작합니다.';
   $('#currentModeLabel').textContent = modeLabel(status.mode);
   $('#mcpUrl').textContent = status.mcpUrl || '아직 생성된 MCP URL이 없습니다';
+  $('#lanMcpUrl').textContent = status.lanMcpUrl || (status.lanIp ? `대기 중 · http://${status.lanIp}:8787/mcp` : '사용 가능한 LAN IPv4를 찾지 못했습니다');
   $('#serverPid').textContent = status.server?.pid || '—';
   $('#serverHealth').textContent = status.localHealthy ? 'HEALTHY' : status.server?.processDetected ? 'BOOTING' : 'NO SIGNAL';
   $('#tunnelPid').textContent = status.tunnel?.pid || '—';
@@ -131,9 +132,11 @@ function updateStatus(status) {
   $('#footerStatus').textContent = online ? `${modeLabel(status.mode)} / PID ${status.server.pid}` : 'LOCAL ENGINE STANDBY';
   $('#startQuick').disabled = state.busy || online;
   $('#startNamed').disabled = state.busy || online || !status.namedTunnel;
+  $('#startLan').disabled = state.busy || online || !status.lanIp;
   $('#stopServer').disabled = state.busy || (!status.server?.processDetected && !status.tunnel?.running);
   $('#copyUrl').disabled = !status.mcpUrl;
   $('#inlineCopyUrl').disabled = !status.mcpUrl;
+  $('#inlineCopyLanUrl').disabled = !status.lanMcpUrl;
   $('#currentModeLabel').classList.toggle('online', online);
   $('#profileBadge').textContent = String(status.profile || 'agent').toUpperCase();
   $$('.profile-option').forEach(button => button.classList.toggle('active', button.dataset.profile === status.profile));
@@ -141,6 +144,8 @@ function updateStatus(status) {
   $('#refreshTtl').textContent = ttlLabel(status.oauthRefreshTokenTtlSeconds);
   $('#overlayToggle').checked = status.settings?.overlayEnabled !== false;
   $('#previewAutoToggle').checked = status.settings?.previewAutoStart === true;
+  $('#lanDirectToggle').checked = status.settings?.lanDirectEnabled === true;
+  $('#localOriginText').textContent = status.settings?.lanDirectEnabled && status.lanIp ? `${status.lanIp}:8787` : '127.0.0.1:8787';
   const resolution = status.display?.primary?.bounds;
   $('#screenResolution').textContent = resolution ? `${resolution.width} × ${resolution.height} / PRIMARY` : 'PRIMARY DISPLAY';
 
@@ -232,7 +237,7 @@ function activityDetail(entry) {
   const detail = entry.details || {};
   if (entry.tool === 'hud_status_update') return `${detail.phase || 'working'} · ${detail.title || detail.message || '공개 작업 요약'}`;
   if (entry.tool === 'desktop_control_acquire') return `${detail.purpose || '다단계 작업'} · TTL ${detail.ttl_seconds || 60}초`;
-  if (entry.tool === 'desktop_control_release') return '현재 MCP 세션의 입력 임대 해제';
+  if (entry.tool === 'desktop_control_release') return '현재 인증 커넥터의 입력 임대 해제';
   if (entry.tool === 'desktop_control_status') return '입력 임대 소유자·만료·대기열 확인';
   if (entry.tool === 'mouse_click') return `x:${detail.x} y:${detail.y} · ${detail.button || 'left'} ×${detail.clicks || 1}`;
   if (entry.tool === 'mouse_move') return `x:${detail.x} y:${detail.y}`;
@@ -411,6 +416,10 @@ function bindEvents() {
   }));
 
   $('#startQuick').addEventListener('click', () => run(() => api.start('quick')));
+  $('#startLan').addEventListener('click', async () => {
+    if (!confirm('LAN 전용 모드는 공개 HTTPS 터널을 종료하므로 웹 ChatGPT 연결이 끊깁니다. 같은 사설망의 기기에서만 사용할까요?')) return;
+    await run(() => api.start('lan'));
+  });
   $('#startNamed').addEventListener('click', async () => {
     if (!state.status?.namedTunnel) {
       $('#fixed-domain').scrollIntoView({ behavior: 'smooth' });
@@ -421,8 +430,10 @@ function bindEvents() {
   });
   $('#stopServer').addEventListener('click', () => run(() => api.stop()));
   const copyUrl = () => run(() => api.copyUrl(), 'MCP URL을 클립보드에 복사했습니다.');
+  const copyLanUrl = () => run(() => api.copyLanUrl(), '이 PC의 LAN MCP URL을 클립보드에 복사했습니다.');
   $('#copyUrl').addEventListener('click', copyUrl);
   $('#inlineCopyUrl').addEventListener('click', copyUrl);
+  $('#inlineCopyLanUrl').addEventListener('click', copyLanUrl);
   $('#copyToken').addEventListener('click', () => run(() => api.copyToken(), '페어링 토큰을 복사했습니다. OAuth 승인 화면에만 붙여넣으세요.'));
   $('#copyPairingToken').addEventListener('click', () => run(() => api.copyToken(), '페어링 토큰을 복사했습니다.'));
   $('#openChatGpt').addEventListener('click', () => api.openChatGpt());
@@ -436,6 +447,15 @@ function bindEvents() {
   }));
   $('#overlayToggle').addEventListener('change', event => run(() => api.setSettings({ overlayEnabled: event.target.checked })));
   $('#previewAutoToggle').addEventListener('change', event => run(() => api.setSettings({ previewAutoStart: event.target.checked })));
+  $('#lanDirectToggle').addEventListener('change', async event => {
+    const enabled = event.target.checked;
+    if (enabled && !confirm('MCP 서버를 이 PC의 LAN IPv4에서도 수신하게 합니다. OAuth는 유지되지만 Windows 방화벽 정책에 따라 다른 기기 접속은 차단될 수 있습니다. 계속할까요?')) {
+      event.target.checked = false;
+      return;
+    }
+    await run(() => api.setSettings({ lanDirectEnabled: enabled }), enabled ? '하이브리드 IP 모드를 켰습니다.' : 'LAN IP 직접 수신을 껐습니다.');
+    updateStatus(await api.getStatus());
+  });
   $('#hudPreview').addEventListener('click', async () => {
     try {
       await api.previewOverlay();

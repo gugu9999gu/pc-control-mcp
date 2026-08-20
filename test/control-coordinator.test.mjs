@@ -30,7 +30,7 @@ test('AsyncFifoMutex runs concurrent work one-at-a-time in arrival order', async
   ]);
 });
 
-test('desktop lease blocks another MCP session while allowing its owner', async () => {
+test('desktop lease blocks another connector while allowing its owner', async () => {
   const coordinator = new DesktopControlCoordinator();
   const alpha = { id: 'session-alpha', label: 'Alpha AI' };
   const beta = { id: 'session-beta', label: 'Beta AI' };
@@ -48,6 +48,17 @@ test('desktop lease blocks another MCP session while allowing its owner', async 
   assert.equal(await coordinator.runInput(beta, 'mouse_click', async () => 'now allowed'), 'now allowed');
 });
 
+test('desktop lease follows one authenticated connector across MCP sessions', async () => {
+  const coordinator = new DesktopControlCoordinator();
+  const firstSession = { id: 'oauth-client:chatgpt', label: 'ChatGPT session one' };
+  const nextSession = { id: 'oauth-client:chatgpt', label: 'ChatGPT session two' };
+
+  assert.equal((await coordinator.acquire(firstSession, { ttlMs: 30_000 })).acquired, true);
+  assert.equal(await coordinator.runInput(nextSession, 'browser_open', async () => 'continued'), 'continued');
+  assert.equal(coordinator.status(nextSession.id).owned_by_requester, true);
+  assert.equal((await coordinator.release(nextSession)).released, true);
+});
+
 test('expired desktop lease is automatically reclaimed', async () => {
   let now = 10_000;
   const coordinator = new DesktopControlCoordinator({ now: () => now });
@@ -60,7 +71,7 @@ test('expired desktop lease is automatically reclaimed', async () => {
   assert.equal(await coordinator.runInput(beta, 'type_text', async () => 'reclaimed'), 'reclaimed');
 });
 
-test('closing an MCP session releases its desktop lease', async () => {
+test('an authenticated connector can explicitly release its desktop lease', async () => {
   const coordinator = new DesktopControlCoordinator();
   const alpha = { id: 'session-alpha', label: 'Alpha AI' };
   await coordinator.acquire(alpha, { ttlMs: 30_000 });

@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createServer as createNetServer } from 'node:net';
+import { createServer as createNetServer, isIP } from 'node:net';
 import {
   appendFile,
   mkdir,
@@ -103,6 +103,7 @@ export class McpController extends EventEmitter {
     this.auditInitialized = false;
     this.auditTimer = null;
     this.processCache = { at: 0, value: [] };
+    this.lanIpCache = { at: 0, value: null };
   }
 
   async initialize() {
@@ -146,7 +147,8 @@ export class McpController extends EventEmitter {
     const current = await this.readJson(this.paths.settings, {});
     return {
       overlayEnabled: current?.overlayEnabled !== false,
-      previewAutoStart: current?.previewAutoStart === true
+      previewAutoStart: current?.previewAutoStart === true,
+      lanDirectEnabled: current?.lanDirectEnabled === true
     };
   }
 
@@ -154,11 +156,44 @@ export class McpController extends EventEmitter {
     const current = await this.getSettings();
     const next = {
       overlayEnabled: typeof patch.overlayEnabled === 'boolean' ? patch.overlayEnabled : current.overlayEnabled,
-      previewAutoStart: typeof patch.previewAutoStart === 'boolean' ? patch.previewAutoStart : current.previewAutoStart
+      previewAutoStart: typeof patch.previewAutoStart === 'boolean' ? patch.previewAutoStart : current.previewAutoStart,
+      lanDirectEnabled: typeof patch.lanDirectEnabled === 'boolean' ? patch.lanDirectEnabled : current.lanDirectEnabled
     };
-    await this.writeJson(this.paths.settings, next);
-    this.emit('settings', next);
-    return next;
+    if (next.lanDirectEnabled === current.lanDirectEnabled) {
+      await this.writeJson(this.paths.settings, next);
+      this.emit('settings', next);
+      return next;
+    }
+    return this.runExclusive('PC IP 수신 경로 변경', async () => {
+      await this.writeJson(this.paths.settings, next);
+      try {
+        const currentUrl = await this.readText(this.paths.publicUrl);
+        const managed = await this.managedProcesses(true);
+        if (currentUrl && managed.servers.length) {
+          const host = this.listenHost(next);
+          this.action(`MCP 서버 수신 주소를 ${host === '0.0.0.0' ? '이 PC의 LAN IP' : '이 PC 내부 전용'}으로 변경합니다…`);
+          await this.stopServersOnly();
+          await this.ensureLocalServer(currentUrl, host);
+        }
+      } catch (error) {
+        await this.writeJson(this.paths.settings, current);
+        const currentUrl = await this.readText(this.paths.publicUrl);
+        const managed = await this.managedProcesses(true);
+        if (currentUrl && !managed.servers.length) {
+          await this.ensureLocalServer(currentUrl, this.listenHost(current)).catch(() => {});
+        }
+        throw error;
+      }
+      this.action(next.lanDirectEnabled
+        ? '하이브리드 IP 모드가 켜졌습니다. 공개 HTTPS와 LAN IP 주소를 함께 사용할 수 있습니다.'
+        : 'LAN IP 직접 수신을 끄고 이 PC 내부 전용 수신으로 되돌렸습니다.', 'success');
+      this.emit('settings', next);
+      return next;
+    });
+  }
+
+  listenHost(settings) {
+    return settings?.lanDirectEnabled ? '0.0.0.0' : '127.0.0.1';
   }
 
   async runExclusive(label, operation) {
@@ -239,11 +274,19 @@ export class McpController extends EventEmitter {
   }
 
   isServerRecord(record) {
-    return /(?:^|[\s"'\\/])src[\\/]server\.mjs(?:[\s"']|$)/i.test(String(record?.CommandLine || ''));
+    const commandLine = String(record?.CommandLine || '').trim();
+    // The server entry is the final process argument. Requiring the final
+    // argument prevents maintenance scripts whose inline source merely
+    // mentions "src/server.mjs" from being mistaken for the live server.
+    return /(?:^|\s)(?:"[^"]*src[\\/]server\.mjs"|'[^']*src[\\/]server\.mjs'|[^\s"']*src[\\/]server\.mjs)\s*$/i.test(commandLine);
   }
 
   isTunnelRecord(record) {
-    return /cloudflared/i.test(String(record?.Name || '')) && /127\.0\.0\.1:8787/i.test(String(record?.CommandLine || ''));
+    const commandLine = String(record?.CommandLine || '');
+    return /cloudflared/i.test(String(record?.Name || '')) &&
+      /\btunnel\b/i.test(commandLine) &&
+      /--url\b/i.test(commandLine) &&
+      /http:\/\/(?:127\.0\.0\.1|localhost|\d{1,3}(?:\.\d{1,3}){3}):8787\b/i.test(commandLine);
   }
 
   async managedProcesses(force = false) {
@@ -434,13 +477,16 @@ export class McpController extends EventEmitter {
         return this.getStatus();
       }
 
+      const settings = await this.getSettings();
+      const listenHost = this.listenHost(settings);
+
       const cloudflared = await this.resolveCloudflared();
       if (!cloudflared) throw new Error('cloudflared.exe를 찾지 못했습니다. Cloudflare Tunnel을 먼저 설치하세요.');
 
       if (mode === 'named') {
         const named = await this.getNamedTunnel(true);
         this.action(`고정 도메인 서버를 시작합니다: ${named.publicBaseUrl}`);
-        await this.ensureLocalServer(named.publicBaseUrl);
+        await this.ensureLocalServer(named.publicBaseUrl, listenHost);
         await this.clearTunnelLogs();
         const env = { ...process.env, TUNNEL_TOKEN: named.token };
         const pid = await this.spawnDetached(cloudflared, ['tunnel', '--no-autoupdate', 'run', '--url', LOCAL_BASE_URL], {
@@ -460,7 +506,7 @@ export class McpController extends EventEmitter {
       }
 
       this.action('로컬 MCP 서버를 준비하고 있습니다…');
-      await this.ensureLocalServer(LOCAL_BASE_URL);
+      await this.ensureLocalServer(LOCAL_BASE_URL, listenHost);
       await this.spawnQuickTunnel(cloudflared);
       const publicBaseUrl = await this.waitForQuickTunnelUrl();
       if (!publicBaseUrl) {
@@ -469,7 +515,7 @@ export class McpController extends EventEmitter {
       }
       this.action(`임시 HTTPS 주소 발급: ${publicBaseUrl}`);
       await this.stopServersOnly();
-      await this.ensureLocalServer(publicBaseUrl);
+      await this.ensureLocalServer(publicBaseUrl, listenHost);
       await writeFile(this.paths.publicUrl, publicBaseUrl, 'ascii');
       if (!(await this.waitForHttp(`${publicBaseUrl}/healthz`, 55_000, { external: true }))) {
         this.action('Quick Tunnel DNS가 아직 전파 중입니다. 서버는 유지되며 잠시 뒤 다시 확인됩니다.', 'warn');
@@ -481,10 +527,12 @@ export class McpController extends EventEmitter {
   }
 
   async preferredLanIp() {
-    const command = "Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(127\\.|169\\.254\\.)' -and $_.PrefixLength -gt 0 } | Sort-Object InterfaceIndex | Select-Object -First 1 -ExpandProperty IPAddress";
+    if (this.lanIpCache.value && Date.now() - this.lanIpCache.at < 30_000) return this.lanIpCache.value;
+    const command = "$preferred = Get-NetIPConfiguration -ErrorAction SilentlyContinue | Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } | ForEach-Object { $_.IPv4Address.IPAddress } | Where-Object { $_ -notmatch '^(127\\.|169\\.254\\.)' } | Select-Object -First 1; if (-not $preferred) { $preferred = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(127\\.|169\\.254\\.)' -and $_.PrefixLength -gt 0 } | Sort-Object InterfaceIndex | Select-Object -First 1 -ExpandProperty IPAddress }; $preferred";
     const { stdout } = await execFileAsync(this.powerShell, ['-NoProfile', '-NonInteractive', '-Command', command], { windowsHide: true, timeout: 10_000 });
     const ip = stdout.trim();
-    if (!/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip)) throw new Error('사용 가능한 사설 IPv4 주소를 찾지 못했습니다.');
+    if (isIP(ip) !== 4 || /^(?:127\.|169\.254\.)/.test(ip)) throw new Error('사용 가능한 사설 IPv4 주소를 찾지 못했습니다.');
+    this.lanIpCache = { at: Date.now(), value: ip };
     return ip;
   }
 
@@ -542,6 +590,8 @@ export class McpController extends EventEmitter {
           ? 'lan'
           : lastPublicBaseUrl ? 'custom' : null;
     const activePublicBaseUrl = localHealthy ? lastPublicBaseUrl : '';
+    const lanIp = await this.preferredLanIp().catch(() => null);
+    const lanMcpUrl = localHealthy && settings.lanDirectEnabled && lanIp ? `http://${lanIp}:8787/mcp` : null;
     return {
       server: {
         running: Boolean(serverRecord) && localHealthy,
@@ -556,6 +606,9 @@ export class McpController extends EventEmitter {
       localHealthy,
       publicBaseUrl: activePublicBaseUrl || null,
       mcpUrl: activePublicBaseUrl ? `${activePublicBaseUrl}/mcp` : null,
+      lanIp,
+      lanMcpUrl,
+      listenHost: this.listenHost(settings),
       lastPublicBaseUrl: lastPublicBaseUrl || null,
       mode: activePublicBaseUrl ? mode : null,
       busy: this.busy,
@@ -603,7 +656,9 @@ export class McpController extends EventEmitter {
     if (currentUrl && managed.servers.length) {
       this.action('새 권한 정책을 적용하기 위해 MCP 서버만 재시작합니다…');
       await this.stopServersOnly();
-      await this.ensureLocalServer(currentUrl, currentUrl.startsWith('http://') && !currentUrl.includes('127.0.0.1') ? '0.0.0.0' : '127.0.0.1');
+      const settings = await this.getSettings();
+      const host = currentUrl.startsWith('http://') && !currentUrl.includes('127.0.0.1') ? '0.0.0.0' : this.listenHost(settings);
+      await this.ensureLocalServer(currentUrl, host);
     }
     this.emit('status-changed');
     return this.getStatus();

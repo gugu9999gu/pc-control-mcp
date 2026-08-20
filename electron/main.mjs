@@ -181,6 +181,12 @@ function registerIpc() {
     clipboard.writeText(status.mcpUrl);
     return status.mcpUrl;
   });
+  ipcMain.handle('mcp:copy-lan-url', async () => {
+    const status = await controller.getStatus();
+    if (!status.lanMcpUrl) throw new Error('LAN IP 주소가 아직 활성화되지 않았습니다. 하이브리드 IP 모드를 켜고 서버를 시작하세요.');
+    clipboard.writeText(status.lanMcpUrl);
+    return status.lanMcpUrl;
+  });
   ipcMain.handle('mcp:copy-token', async () => {
     const token = await controller.getBootstrapToken();
     clipboard.writeText(token);

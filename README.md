@@ -6,12 +6,12 @@ This project exposes an allowlisted Windows desktop-control MCP server over Stre
 
 ## Quick start
 
-Download the portable `Remote-MCP-Control-0.2.2-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
+Download the portable `Remote-MCP-Control-0.2.3-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
 
 The portable build is not Authenticode-signed. Windows SmartScreen can therefore show an unknown-publisher warning. Download it only from this repository's release, compare its SHA-256 value with `SHA256SUMS.txt` on the same release, and do not run it if the values differ. A future release needs a trusted Windows code-signing certificate to remove this warning.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.2-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.3-x64.exe
 ```
 
 ```text
@@ -27,8 +27,11 @@ With no command-line arguments this opens the Electron control center. On the fi
 - a center-lower operation brief showing the AI's user-visible task summary, current target, progress, and recent real tool execution log;
 - connector permissions, active sessions, revocation, pairing-token copy, and local safe/agent/full policy controls;
 - Quick Tunnel, private-LAN, and stable Cloudflare Named Tunnel management.
+- a hybrid IP mode that keeps public HTTPS connected while also listening on this PC's LAN IPv4 address.
 
 Choose **Start temporary HTTPS** for a generated Quick Tunnel URL, or configure a stable domain in the **Fixed domain** section and choose **Start fixed domain**. The app creates the server and tunnel as background processes; quitting the app from its tray menu can either keep them running or stop them.
+
+Enable **Fixed domain → Hybrid IP mode** when trusted devices on the same router must also reach the server. The MCP core listens on `0.0.0.0:8787`, the launcher detects the preferred LAN IPv4, and the dashboard displays and copies `http://LAN-IP:8787/mcp`. The public HTTPS URL and OAuth resource stay unchanged, so the web ChatGPT connector does not need to be registered again. Windows firewall and network-profile policy can still block another LAN device.
 
 `MCP-Remote-Control-App.cmd` opens the same Electron app directly. Passing an existing command-line switch to `MCP-Remote-Control-Launcher.cmd` still opens the legacy PowerShell interface for automation compatibility.
 
@@ -100,9 +103,9 @@ All real mouse, keyboard, window-focus, app-launch, and browser-open calls enter
 
 1. Call `desktop_control_acquire` with a short purpose and TTL.
 2. Perform the related visual checks and input calls. Screenshot and other read-only tools remain concurrent, even while the lease is held.
-3. Call `desktop_control_release`. The server also releases the lease when the MCP session closes and expires it automatically after at most ten minutes.
+3. Call `desktop_control_release`. The lease spans the short-lived MCP sessions that ChatGPT may create for individual tool calls and expires automatically after at most ten minutes.
 
-If another session owns the lease, input fails with a clear busy result instead of interleaving. Codex, Claude, and allowlisted CLI background jobs also reserve their normalized working directory. A second job cannot start in the same workspace until the first ends; use separate Git worktrees when true parallel editing is required. Only the connector principal that started a background job can stop it.
+The lease owner is the authenticated OAuth connector (or pairing credential), not a transient transport session. Calls from that same connector can therefore continue and release the lease without reconnecting, while a separately authorized ChatGPT, Codex, or Claude connector receives a clear busy result instead of interleaving. Codex, Claude, and allowlisted CLI background jobs also reserve their normalized working directory. A second job cannot start in the same workspace until the first ends; use separate Git worktrees when true parallel editing is required. Only the connector principal that started a background job can stop it.
 
 ## Local control profiles
 
@@ -127,11 +130,11 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\start.ps1 -PublicBaseUrl 
 LAN start (the Windows firewall rule requires an elevated PowerShell):
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File .\scripts\start.ps1 -PublicBaseUrl http://192.168.68.71:8787
+powershell.exe -ExecutionPolicy Bypass -File .\scripts\start.ps1 -PublicBaseUrl http://LAN-IP:8787
 powershell.exe -ExecutionPolicy Bypass -File .\scripts\install-firewall.ps1
 ```
 
-The LAN MCP URL is `http://192.168.68.71:8787/mcp`. LAN HTTP is intended for a trusted private network; use the public HTTPS launcher or a named/private tunnel for Internet access.
+The LAN MCP URL is `http://LAN-IP:8787/mcp`. LAN HTTP is intended for a trusted private network; use the public HTTPS launcher or a named/private tunnel for Internet access.
 
 Manual legacy pairing for non-ChatGPT clients remains available:
 
@@ -169,3 +172,5 @@ The Electron **Start temporary HTTPS** button and legacy launcher option 1 use C
 For a stable URL, open the Electron **Fixed domain** section. It checks cloudflared and login state, can open the Cloudflare browser login, create a uniquely named tunnel, create a DNS route for a Cloudflare-managed hostname, obtain the run token without displaying it, and encrypt it with the current Windows user's secure storage. Use a simple unique name such as `remote-mcp-admin-pc` (English letters, numbers, and hyphens). The hostname must be under a domain active in the same Cloudflare account, such as `https://mcp.example.com`; existing DNS records are never overwritten. Existing tunnel URLs and tokens can also be registered manually. The resulting `https://your-hostname/mcp` URL remains unchanged across app restarts, preserving the connector's OAuth resource identifier. Legacy launcher options 19 and 20 remain available and use Windows DPAPI storage.
 
 Option 18 provides the current private-LAN address as `http://LAN-IP:8787/mcp`; it remains stable while DHCP keeps the same IP and is suitable for trusted devices on that LAN after running `scripts\install-firewall.ps1` as Administrator. It is not HTTPS and is not reachable by ChatGPT's cloud connector. Use a named HTTPS tunnel for remote ChatGPT access.
+
+The Electron hybrid IP mode keeps that private address active alongside the existing Quick or Named HTTPS tunnel. `192.168.x.x` and similar private addresses are never directly reachable from ChatGPT's cloud. For a private developer-mode connection, OpenAI Secure MCP Tunnel is another option, but it requires a Platform `tunnel_id`, runtime API key, and a running `tunnel-client`; it does not provide a public plugin-submission URL.

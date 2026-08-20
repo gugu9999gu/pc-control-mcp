@@ -22,6 +22,39 @@ test('controller recognizes servers launched with relative and absolute entry pa
   assert.equal(recognizes.call({}, { CommandLine: '"C:\\Program Files\\nodejs\\node.exe" src/server.mjs' }), true);
   assert.equal(recognizes.call({}, { CommandLine: 'electron.exe C:\\work\\remote-mcp-control\\src\\server.mjs' }), true);
   assert.equal(recognizes.call({}, { CommandLine: 'node.exe src/server-other.mjs' }), false);
+  assert.equal(recognizes.call({}, { CommandLine: 'node.exe --input-type=module -e "const entry = resolve(\'src/server.mjs\'); run(entry)"' }), false);
+});
+
+test('controller recognizes loopback and LAN-IP tunnel origins without matching unrelated tunnels', () => {
+  const recognizes = McpController.prototype.isTunnelRecord;
+  assert.equal(recognizes.call({}, { Name: 'cloudflared.exe', CommandLine: 'cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8787' }), true);
+  assert.equal(recognizes.call({}, { Name: 'cloudflared.exe', CommandLine: 'cloudflared tunnel --no-autoupdate --url http://192.168.68.80:8787' }), true);
+  assert.equal(recognizes.call({}, { Name: 'cloudflared.exe', CommandLine: 'cloudflared tunnel --url http://127.0.0.1:9999' }), false);
+  assert.equal(recognizes.call({}, { Name: 'other.exe', CommandLine: 'other tunnel --url http://127.0.0.1:8787' }), false);
+});
+
+test('LAN direct setting is explicit and maps to the all-interface listen host', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'remote-mcp-settings-'));
+  const controller = new McpController({
+    projectRoot: ROOT,
+    dataDir,
+    serverEntry: join(ROOT, 'src', 'server.mjs'),
+    controlScript: join(ROOT, 'scripts', 'windows-control.ps1'),
+    nodeExecutable: process.execPath,
+    secureStore: null,
+    runtimeCwd: ROOT
+  });
+  try {
+    assert.equal((await controller.getSettings()).lanDirectEnabled, false);
+    assert.equal(controller.listenHost(await controller.getSettings()), '127.0.0.1');
+    const updated = await controller.updateSettings({ lanDirectEnabled: true });
+    assert.equal(updated.lanDirectEnabled, true);
+    assert.equal(controller.listenHost(updated), '0.0.0.0');
+    assert.equal((await controller.getSettings()).lanDirectEnabled, true);
+  } finally {
+    controller.dispose();
+    await rm(dataDir, { recursive: true, force: true });
+  }
 });
 
 test('HUD activity lifecycle metadata is retained without leaking secret fields', () => {

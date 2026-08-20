@@ -313,8 +313,18 @@ function getAllowedProgram(alias) {
 function desktopOwnerFromContext(context) {
   const clientInfoName = String(context.clientInfo?.name || '').trim();
   const clientName = String(context.clientName || 'connected AI').trim();
+  // ChatGPT can create a fresh Streamable HTTP MCP session for each tool call.
+  // A connection UUID therefore is not a stable lease owner and makes a
+  // connector lock itself out on its very next call.  OAuth client IDs survive
+  // access-token rotation, while pairing credentials fall back to their token
+  // ID, so use that authenticated principal as the coordination boundary.
+  const principalId = context.clientId
+    ? `oauth-client:${context.clientId}`
+    : context.tokenId
+      ? `access-token:${context.tokenId}`
+      : `connection:${context.connectionId}`;
   return {
-    id: context.connectionId || context.tokenId,
+    id: principalId,
     label: clientInfoName && clientInfoName !== clientName ? `${clientName} · ${clientInfoName}` : clientInfoName || clientName
   };
 }
@@ -1465,7 +1475,7 @@ function createMcpServer(context) {
 
   registerProtectedTool('desktop_control_acquire', {
     title: 'Acquire multi-step desktop control',
-    description: 'Reserves mouse, keyboard, app launch, browser open, and window focus for this MCP session so another AI cannot interleave input during a multi-step operation. The lease renews when its owner uses an input tool and expires automatically.',
+    description: 'Reserves mouse, keyboard, app launch, browser open, and window focus for this authenticated connector so another AI connector cannot interleave input during a multi-step operation. The lease works across short-lived MCP sessions, renews when its owner uses an input tool, and expires automatically.',
     inputSchema: z.object({
       purpose: z.string().min(1).max(240),
       ttl_seconds: z.number().int().min(5).max(600).default(60),
@@ -1491,7 +1501,7 @@ function createMcpServer(context) {
 
   registerProtectedTool('desktop_control_release', {
     title: 'Release multi-step desktop control',
-    description: 'Releases the desktop-control lease owned by this MCP session. A lease is also released when its session closes or its TTL expires.',
+    description: 'Releases the desktop-control lease owned by this authenticated connector. The lease spans short-lived MCP sessions and expires automatically at its TTL if it is not explicitly released.',
     inputSchema: z.object({}),
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false }
   }, async () => executeTool('desktop_control_release', {}, async () => textResult(await desktopControlCoordinator.release(desktopOwner))));
@@ -2062,7 +2072,9 @@ async function handleMcp(req, res) {
       const id = transport.sessionId;
       const session = id ? transports.get(id) : null;
       if (id) transports.delete(id);
-      await desktopControlCoordinator.releaseOwner(connectionId).catch(() => {});
+      // Do not release here: OpenAI may close one short-lived transport and
+      // open another for the next tool call.  The authenticated connector owns
+      // the lease and releases it explicitly, or the bounded TTL reclaims it.
       if (id) await audit({ event: 'mcp_session_closed', session_id: id, ...(session?.auth || auth) });
       await mcpServer.close().catch(() => {});
     };
