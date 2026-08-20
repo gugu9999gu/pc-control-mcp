@@ -58,6 +58,36 @@ test('LAN direct setting is explicit and maps to the all-interface listen host',
   }
 });
 
+test('a configured named tunnel becomes the persistent default and can auto-restore', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'remote-mcp-named-default-'));
+  const controller = new McpController({
+    projectRoot: ROOT,
+    dataDir,
+    serverEntry: join(ROOT, 'src', 'server.mjs'),
+    controlScript: join(ROOT, 'scripts', 'windows-control.ps1'),
+    nodeExecutable: process.execPath,
+    secureStore: null,
+    runtimeCwd: ROOT
+  });
+  try {
+    await controller.writeJson(controller.paths.namedConfig, {
+      version: 2,
+      public_base_url: 'https://mcp.example.com',
+      tunnel_name: 'remote-mcp-test',
+      management: 'local-config-v1'
+    });
+    const defaults = await controller.getSettings();
+    assert.equal(defaults.preferredStartMode, 'named');
+    assert.equal(defaults.autoRestoreServer, true);
+    const disabled = await controller.updateSettings({ autoRestoreServer: false });
+    assert.equal(disabled.preferredStartMode, 'named');
+    assert.equal(disabled.autoRestoreServer, false);
+  } finally {
+    controller.dispose();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
 test('HUD activity lifecycle metadata is retained without leaking secret fields', () => {
   const safe = validators.sanitizeActivity({
     timestamp: '2026-08-20T00:00:00.000Z',
@@ -112,6 +142,31 @@ test('audit watcher emits single-line lifecycle appends without dropping the fir
     await appendFile(controller.paths.audit, `${JSON.stringify({ event: 'tool_call', tool: 'mouse_move', activity_id: 'one', success: true })}\n`);
     await new Promise(resolvePromise => setTimeout(resolvePromise, 220));
     assert.deepEqual(received.map(entry => entry.event), ['tool_start', 'tool_call']);
+  } finally {
+    controller.dispose();
+    await rm(dataDir, { recursive: true, force: true });
+  }
+});
+
+test('historical launcher polling is excluded without hiding real AI activity', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'remote-mcp-audit-history-'));
+  const controller = new McpController({
+    projectRoot: ROOT,
+    dataDir,
+    serverEntry: join(ROOT, 'src', 'server.mjs'),
+    controlScript: join(ROOT, 'scripts', 'windows-control.ps1'),
+    nodeExecutable: process.execPath,
+    secureStore: null,
+    runtimeCwd: ROOT
+  });
+  try {
+    await controller.initialize();
+    await appendFile(controller.paths.audit, `${JSON.stringify({ event: 'tool_call', tool: 'mouse_click', success: true, details: { x: 20, y: 30 } })}\n`);
+    for (let index = 0; index < 600; index += 1) {
+      await appendFile(controller.paths.audit, `${JSON.stringify({ event: 'connector_status_requested', local_admin: true, index })}\n`);
+    }
+    const history = await controller.getRecentActivity(20);
+    assert.deepEqual(history.map(entry => entry.event), ['tool_call']);
   } finally {
     controller.dispose();
     await rm(dataDir, { recursive: true, force: true });
@@ -238,11 +293,44 @@ test('server boots with an Electron-managed external data directory', async () =
     assert.equal(connectedStatus.connection_state.status, 'connected');
     assert.equal(connectedStatus.connection_state.active_session_count, 1);
 
+    const refreshResponse = await fetch(`http://127.0.0.1:${port}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token', client_id: registration.client_id,
+        refresh_token: token.refresh_token, resource: `http://127.0.0.1:${port}`
+      })
+    });
+    assert.equal(refreshResponse.status, 200);
+    const refreshedToken = await refreshResponse.json();
+    const listWithRefreshedToken = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: { ...mcpHeaders, Authorization: `Bearer ${refreshedToken.access_token}`, 'Mcp-Session-Id': sessionId },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} })
+    });
+    assert.equal(listWithRefreshedToken.status, 200, await listWithRefreshedToken.text());
+
     await fetch(`http://127.0.0.1:${port}/mcp`, {
-      method: 'DELETE', headers: { ...mcpHeaders, 'Mcp-Session-Id': sessionId }
+      method: 'DELETE', headers: { ...mcpHeaders, Authorization: `Bearer ${refreshedToken.access_token}`, 'Mcp-Session-Id': sessionId }
     });
     const idleStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
     assert.equal(idleStatus.connection_state.status, 'authorized');
+
+    const reconnectInitialize = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST',
+      headers: { ...mcpHeaders, Authorization: `Bearer ${refreshedToken.access_token}`, 'Mcp-Session-Id': sessionId },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 3, method: 'initialize',
+        params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'stale-session-reconnect-test', version: '1.0.0' } }
+      })
+    });
+    assert.equal(reconnectInitialize.status, 200, await reconnectInitialize.text());
+    const reconnectedSessionId = reconnectInitialize.headers.get('mcp-session-id');
+    assert.ok(reconnectedSessionId);
+    assert.notEqual(reconnectedSessionId, sessionId);
+    await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'DELETE', headers: { ...mcpHeaders, Authorization: `Bearer ${refreshedToken.access_token}`, 'Mcp-Session-Id': reconnectedSessionId }
+    });
   } finally {
     child.kill();
     await new Promise(resolvePromise => child.once('close', resolvePromise));

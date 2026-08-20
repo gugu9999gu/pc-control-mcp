@@ -154,6 +154,8 @@ function registerIpc() {
     return { dataUrl: source.thumbnail.toDataURL(), width: size.width, height: size.height, timestamp: Date.now() };
   });
   ipcMain.handle('mcp:start', async (_event, mode) => controller.start(mode));
+  ipcMain.handle('mcp:start-preferred', () => controller.startPreferred());
+  ipcMain.handle('mcp:restart-server', () => controller.restartServer());
   ipcMain.handle('mcp:stop', () => controller.stop());
   ipcMain.handle('mcp:set-profile', (_event, profile) => controller.setProfile(profile));
   ipcMain.handle('mcp:revoke-connector', (_event, clientId) => controller.revokeConnector(clientId));
@@ -193,6 +195,7 @@ function registerIpc() {
     return true;
   });
   ipcMain.handle('mcp:open-chatgpt', () => shell.openExternal('https://chatgpt.com/'));
+  ipcMain.handle('mcp:open-chatgpt-plugins', () => shell.openExternal('https://chatgpt.com/plugins'));
   ipcMain.handle('mcp:open-data-folder', () => shell.openPath(controller.dataDir));
   ipcMain.handle('mcp:window', (_event, command) => {
     if (!mainWindow || mainWindow.isDestroyed()) return false;
@@ -371,6 +374,8 @@ function createTray() {
     { label: '대시보드 열기', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
     { label: '현재 MCP URL 복사', click: async () => { try { const status = await controller.getStatus(); if (status.mcpUrl) clipboard.writeText(status.mcpUrl); } catch {} } },
     { type: 'separator' },
+    { label: '기본 모드로 서버 시작', click: () => controller.startPreferred().catch(error => controller.action(error.message, 'error')) },
+    { label: '주소 유지 서버 재시작', click: () => controller.restartServer().catch(error => controller.action(error.message, 'error')) },
     { label: '서버 종료', click: () => controller.stop().catch(error => controller.action(error.message, 'error')) },
     { label: '앱 종료 (서버 유지)', click: () => { isQuitting = true; app.quit(); } },
     { label: '서버 종료 후 앱 종료', click: async () => { try { await controller.stop(); } finally { isQuitting = true; app.quit(); } } }
@@ -410,6 +415,12 @@ async function runSmokeCapture() {
     await writeFile(overlayTarget, overlayImage.toPNG());
     console.log(`OVERLAY_SMOKE_SCREENSHOT=${overlayTarget}`);
   }
+  await mainWindow.webContents.executeJavaScript("document.querySelector('[data-target=\"connections\"]')?.click()");
+  await delay(180);
+  const connectionsImage = await mainWindow.webContents.capturePage();
+  const connectionsTarget = /\.png$/i.test(target) ? target.replace(/\.png$/i, '-connections.png') : `${target}-connections.png`;
+  await writeFile(connectionsTarget, connectionsImage.toPNG());
+  console.log(`CONNECTIONS_SMOKE_SCREENSHOT=${connectionsTarget}`);
   broadcastActivity({
     timestamp: new Date().toISOString(), event: 'tool_call', tool: 'mouse_click', success: true, activityId, durationMs: 650,
     clientName: 'OpenAI connector · UI smoke test', details: { x: 960, y: 420, button: 'left', clicks: 1 }
@@ -461,6 +472,9 @@ app.whenReady().then(async () => {
   screen.on('display-removed', refreshDisplays);
   screen.on('display-metrics-changed', refreshDisplays);
   statusTimer = setInterval(publishStatus, 2200);
+  if (!IS_SMOKE_TEST && settings.autoRestoreServer && settings.preferredStartMode === 'named') {
+    controller.restorePreferredServer().catch(error => controller.action(`고정 도메인 자동 복구 실패: ${error.message}`, 'error'));
+  }
 });
 
 app.on('before-quit', () => {

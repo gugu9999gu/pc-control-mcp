@@ -4,8 +4,8 @@ import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve, relative, isAbsolute } from 'node:path';
 import { randomBytes, randomUUID, createHash, timingSafeEqual } from 'node:crypto';
-import { mkdir, readFile, writeFile, appendFile, rm, access, readdir } from 'node:fs/promises';
-import { constants as fsConstants } from 'node:fs';
+import { mkdir, readFile, writeFile, appendFile, rm, access, readdir, stat as fileStat } from 'node:fs/promises';
+import { constants as fsConstants, watch as watchFileSystem } from 'node:fs';
 import os from 'node:os';
 import * as z from 'zod/v4';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -42,10 +42,14 @@ const ACCESS_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_ACCESS_TOKEN_TT
 // Keep connector access tokens long-lived enough for clients that keep an MCP
 // session warm but delay refresh-token rotation. Local revocation remains
 // immediate and the values can be shortened through environment variables.
-const OAUTH_ACCESS_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS || `${7 * 24 * 60 * 60}`, 10);
-const OAUTH_REFRESH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS || `${90 * 24 * 60 * 60}`, 10);
+const OAUTH_ACCESS_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS || `${30 * 24 * 60 * 60}`, 10);
+const OAUTH_REFRESH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS || `${365 * 24 * 60 * 60}`, 10);
 const OAUTH_CODE_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_CODE_TTL_SECONDS || '300', 10);
 const PAIRING_STATE_TTL_SECONDS = Math.max(60, Number.parseInt(process.env.MCP_PAIRING_STATE_TTL_SECONDS || '600', 10) || 600);
+const ACTIVE_SESSION_WINDOW_SECONDS = Math.max(15, Number.parseInt(process.env.MCP_ACTIVE_SESSION_WINDOW_SECONDS || '90', 10) || 90);
+const MAX_RETAINED_MCP_SESSIONS = Math.max(32, Number.parseInt(process.env.MCP_MAX_RETAINED_SESSIONS || '512', 10) || 512);
+const FILE_ACTIVITY_DEBOUNCE_MS = 220;
+const MAX_FILE_ACTIVITY_EVENTS_PER_JOB = 2_000;
 const OAUTH_SCOPES = ['desktop:read', 'desktop:control'];
 const ALLOWED_ORIGINS = (process.env.MCP_ALLOWED_ORIGINS || '')
   .split(',')
@@ -367,7 +371,7 @@ function connectorStatusSummary(options = {}) {
     .filter(client => !options.clientId || client.client_id === options.clientId)
     .map(connectorSummary)
     .sort((left, right) => Date.parse(right.last_used_at || 0) - Date.parse(left.last_used_at || 0));
-  const activeSessions = [...transports.entries()]
+  const retainedSessions = [...transports.entries()]
     .filter(([, session]) => !options.clientId || session.auth.clientId === options.clientId)
     .map(([sessionId, session]) => ({
     session_id: sessionId,
@@ -378,6 +382,8 @@ function connectorStatusSummary(options = {}) {
     last_activity_at: session.lastActivityAt || null,
     client_info: session.clientInfo || null
     }));
+  const activeCutoff = Date.now() - ACTIVE_SESSION_WINDOW_SECONDS * 1_000;
+  const activeSessions = retainedSessions.filter(session => Date.parse(session.last_activity_at || 0) >= activeCutoff);
   const connectionState = deriveConnectionState({
     connectors,
     activeSessions,
@@ -387,11 +393,49 @@ function connectorStatusSummary(options = {}) {
     oauth_access_token_ttl_seconds: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
     oauth_refresh_token_ttl_seconds: OAUTH_REFRESH_TOKEN_TTL_SECONDS,
     pairing_state_ttl_seconds: PAIRING_STATE_TTL_SECONDS,
+    active_session_window_seconds: ACTIVE_SESSION_WINDOW_SECONDS,
     connection_state: connectionState,
     connectors,
     active_mcp_sessions: activeSessions,
+    retained_mcp_session_count: retainedSessions.length,
     desktop_control: desktopControlCoordinator.status(options.ownerId || null)
   };
+}
+
+function repairMissingOauthClients() {
+  const clientIds = new Set([
+    ...authState.access_tokens
+      .filter(token => token.auth_type === 'oauth' && token.client_id)
+      .map(token => token.client_id),
+    ...authState.refresh_tokens.filter(token => token.client_id).map(token => token.client_id)
+  ]);
+  let changed = false;
+  for (const clientId of clientIds) {
+    if (authState.oauth_clients.some(client => client.client_id === clientId)) continue;
+    const accessTokens = authState.access_tokens.filter(token => token.auth_type === 'oauth' && token.client_id === clientId);
+    const refreshTokens = authState.refresh_tokens.filter(token => token.client_id === clientId);
+    const records = [...accessTokens, ...refreshTokens];
+    const authorizationCodes = authState.authorization_codes.filter(code => code.client_id === clientId);
+    const newest = [...records].sort((left, right) => (right.issued_at || 0) - (left.issued_at || 0))[0];
+    const active = records.some(token => !token.revoked_at && token.expires_at > nowSeconds());
+    const issuedAt = records.reduce((earliest, token) => Math.min(earliest, token.issued_at || earliest), newest?.issued_at || nowSeconds());
+    authState.oauth_clients.push({
+      client_id: clientId,
+      client_name: newest?.client_name || getClientName(clientId),
+      redirect_uris: [...new Set(authorizationCodes.map(code => code.redirect_uri).filter(Boolean))],
+      scope: newest?.scope || OAUTH_SCOPES.join(' '),
+      permissions: permissionsFromRecord(newest || {}),
+      token_endpoint_auth_method: 'none',
+      issued_at: issuedAt,
+      pairing_status: active ? 'authorized' : 'revoked',
+      pairing_started_at: issuedAt,
+      pairing_updated_at: newest?.issued_at || issuedAt,
+      pairing_expires_at: null,
+      authorized_at: active ? (newest?.issued_at || issuedAt) : null
+    });
+    changed = true;
+  }
+  return changed;
 }
 
 async function initializeAuth() {
@@ -408,6 +452,7 @@ async function initializeAuth() {
       authorization_codes: Array.isArray(parsed.authorization_codes) ? parsed.authorization_codes : [],
       oauth_clients: Array.isArray(parsed.oauth_clients) ? parsed.oauth_clients : []
     };
+    if (repairMissingOauthClients()) await writeJson(AUTH_FILE, authState);
     return false;
   }
 
@@ -734,6 +779,15 @@ async function closeTrackedSessions(predicate) {
     .filter(([, session]) => predicate(session))
     .map(([, session]) => Promise.resolve(session.transport.close()).catch(() => {}));
   await Promise.all(sessionsToClose);
+}
+
+async function pruneRetainedSessions() {
+  const overflow = transports.size - MAX_RETAINED_MCP_SESSIONS;
+  if (overflow <= 0) return;
+  const oldest = [...transports.entries()]
+    .sort(([, left], [, right]) => Date.parse(left.lastActivityAt || left.connectedAt || 0) - Date.parse(right.lastActivityAt || right.connectedAt || 0))
+    .slice(0, overflow);
+  await Promise.all(oldest.map(([, session]) => Promise.resolve(session.transport.close()).catch(() => {})));
 }
 
 async function revokeClientAuthorization(clientId, reason, context = {}) {
@@ -1178,7 +1232,8 @@ function jobSummary(job) {
     signal: job.signal || null,
     timed_out: Boolean(job.timedOut),
     output_bytes: job.outputBytes,
-    output_truncated: Boolean(job.outputTruncated)
+    output_truncated: Boolean(job.outputTruncated),
+    file_activity_events: job.fileActivity?.eventCount || 0
   };
 }
 
@@ -1201,6 +1256,96 @@ function appendJobOutput(job, stream, chunk) {
   appendFile(job.logPath, `[${stream}] ${text}`, { encoding: 'utf8', mode: 0o600 }).catch(() => {});
 }
 
+const IGNORED_FILE_ACTIVITY_SEGMENTS = new Set(['.git', 'node_modules', '.next', '.cache', 'coverage', 'dist', 'build']);
+
+function auditedWorkspacePath(job, filename) {
+  const candidate = resolve(job.cwd, String(filename || ''));
+  if (!isPathWithin(candidate, job.cwd)) return null;
+  // The audit file and background-job records can live underneath a broad
+  // allowlisted workspace. Never observe the server's own data directory or
+  // each audit append would recursively generate another file event.
+  if (isPathWithin(candidate, DATA_DIR)) return null;
+  const relativePath = relative(job.cwd, candidate);
+  if (!relativePath || relativePath.split(/[\\/]+/).some(segment => IGNORED_FILE_ACTIVITY_SEGMENTS.has(segment.toLowerCase()))) return null;
+  return { absolute: candidate, relative: relativePath.replaceAll('\\', '/') };
+}
+
+async function flushJobFileActivity(job) {
+  const state = job.fileActivity;
+  if (!state || state.flushing || state.pending.size === 0) return state?.flushing || Promise.resolve();
+  const pending = [...state.pending.entries()];
+  state.pending.clear();
+  state.flushing = (async () => {
+    for (const [relativePath, change] of pending) {
+      if (state.eventCount >= MAX_FILE_ACTIVITY_EVENTS_PER_JOB) {
+        if (!state.suppressionReported) {
+          state.suppressionReported = true;
+          await audit({
+            event: 'file_activity_suppressed',
+            job_id: job.id,
+            owner_client: job.ownerLabel,
+            details: { workspace: job.cwd, limit: MAX_FILE_ACTIVITY_EVENTS_PER_JOB }
+          });
+        }
+        break;
+      }
+      let action = change === 'change' ? 'modified' : 'created_or_renamed';
+      if (change === 'rename') {
+        try { await fileStat(resolve(job.cwd, relativePath)); } catch { action = 'deleted'; }
+      }
+      state.eventCount += 1;
+      await audit({
+        event: 'file_activity',
+        job_id: job.id,
+        kind: job.kind,
+        owner_client: job.ownerLabel,
+        details: { action, path: relativePath, workspace: job.cwd }
+      });
+    }
+  })().finally(() => { state.flushing = null; });
+  return state.flushing;
+}
+
+function startJobFileActivity(job) {
+  const state = {
+    watcher: null,
+    pending: new Map(),
+    timer: null,
+    flushing: null,
+    eventCount: 0,
+    suppressionReported: false
+  };
+  job.fileActivity = state;
+  try {
+    state.watcher = watchFileSystem(job.cwd, { recursive: process.platform === 'win32' || process.platform === 'darwin' }, (eventType, filename) => {
+      const path = auditedWorkspacePath(job, filename);
+      if (!path) return;
+      state.pending.set(path.relative, eventType);
+      if (state.timer) clearTimeout(state.timer);
+      state.timer = setTimeout(() => flushJobFileActivity(job).catch(() => {}), FILE_ACTIVITY_DEBOUNCE_MS);
+      state.timer.unref?.();
+    });
+    state.watcher.on('error', error => {
+      audit({ event: 'file_activity_watcher_error', job_id: job.id, owner_client: job.ownerLabel, error: error.message }).catch(() => {});
+    });
+  } catch (error) {
+    audit({ event: 'file_activity_watcher_error', job_id: job.id, owner_client: job.ownerLabel, error: error.message }).catch(() => {});
+  }
+}
+
+async function stopJobFileActivity(job) {
+  const state = job.fileActivity;
+  if (!state) return;
+  // Windows can deliver the final rename/change notification just after the
+  // child exits. Give that bounded queue one short turn before closing it.
+  await sleep(FILE_ACTIVITY_DEBOUNCE_MS);
+  if (state.timer) clearTimeout(state.timer);
+  await flushJobFileActivity(job);
+  if (state.flushing) await state.flushing;
+  state.watcher?.close();
+  state.watcher = null;
+}
+
 async function finishJob(job, status, details = {}) {
   if (job.endedAt) return;
   job.status = status;
@@ -1208,6 +1353,7 @@ async function finishJob(job, status, details = {}) {
   job.exitCode = details.exitCode ?? null;
   job.signal = details.signal || null;
   if (job.timer) clearTimeout(job.timer);
+  await stopJobFileActivity(job).catch(() => {});
   await appendFile(job.logPath, `\n[runner] status=${status} exit_code=${job.exitCode ?? ''}\n`, { encoding: 'utf8', mode: 0o600 }).catch(() => {});
   await persistJob(job).catch(() => {});
   await audit({
@@ -1275,6 +1421,7 @@ async function startTrackedJobUnlocked({ kind, programAlias, command, fixedArgs 
   agentJobs.set(id, job);
   await appendFile(job.logPath, `[runner] started ${now} program=${programAlias}\n`, { encoding: 'utf8', mode: 0o600 });
   await persistJob(job);
+  startJobFileActivity(job);
 
   let child;
   try {
@@ -1399,7 +1546,9 @@ function inputGuard() {
 }
 
 function createMcpServer(context) {
-  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.2' });
+  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.5' }, {
+    instructions: 'This is the persistent Windows PC selected by the user. OpenAI may create a fresh short-lived MCP transport for every tool call; that is normal. For tasks that require this PC, call connector_status or control_capabilities before concluding the PC connector is unavailable. If a transport became stale, initialize a fresh MCP session and retry the safe read-only check once. Publish concise user-visible progress with hud_status_update, and never send hidden chain-of-thought or secrets to the HUD.'
+  });
   const securitySchemes = [{ type: 'oauth2', scopes: OAUTH_SCOPES }];
   const desktopOwner = desktopOwnerFromContext(context);
   const jobOwner = jobOwnerFromContext(context);
@@ -2070,7 +2219,6 @@ async function handleAuth(req, res, context) {
   if (url.pathname === '/admin/connectors') {
     if (!requireLocalAdmin(req, res)) return true;
     if (req.method === 'GET') {
-      await audit({ event: 'connector_status_requested', local_admin: true });
       sendJson(res, 200, connectorStatusSummary());
       return true;
     }
@@ -2111,13 +2259,26 @@ async function handleMcp(req, res) {
 
     if (sessionId) {
       const session = transports.get(sessionId);
-      if (!session || session.auth.tokenId !== auth.tokenId) {
-        sendJson(res, 404, { jsonrpc: '2.0', error: { code: -32000, message: 'Unknown or unauthorized MCP session.' }, id: null });
+      const samePrincipal = session && (
+        (session.auth.clientId && auth.clientId && session.auth.clientId === auth.clientId && session.auth.resource === auth.resource) ||
+        (!session.auth.clientId && !auth.clientId && session.auth.tokenId === auth.tokenId)
+      );
+      if (samePrincipal) {
+        // OAuth access-token refresh must not invalidate an otherwise healthy
+        // MCP transport. The client ID is the stable authenticated principal.
+        Object.assign(session.auth, auth);
+        session.lastActivityAt = new Date().toISOString();
+        await session.transport.handleRequest(req, res, body);
         return;
       }
-      session.lastActivityAt = new Date().toISOString();
-      await session.transport.handleRequest(req, res, body);
-      return;
+      if (!isInitializeRequest(body)) {
+        sendJson(res, 404, {
+          jsonrpc: '2.0',
+          error: { code: -32000, message: 'MCP session is no longer available. Initialize a fresh session and retry.', data: { reconnectable: true } },
+          id: null
+        });
+        return;
+      }
     }
 
     if (!isInitializeRequest(body)) {
@@ -2138,6 +2299,7 @@ async function handleMcp(req, res) {
       onsessioninitialized: id => {
         transports.set(id, { transport, server: mcpServer, auth: mcpContext, connectedAt, lastActivityAt: connectedAt, clientInfo });
         audit({ event: 'mcp_session_started', session_id: id, connection_id: connectionId, ...auth, client_info: clientInfo }).catch(() => {});
+        pruneRetainedSessions().catch(() => {});
       }
     });
     transport.onclose = async () => {
@@ -2160,10 +2322,15 @@ async function handleMcp(req, res) {
     return;
   }
   const session = transports.get(sessionId);
-  if (!session || session.auth.tokenId !== auth.tokenId) {
+  const samePrincipal = session && (
+    (session.auth.clientId && auth.clientId && session.auth.clientId === auth.clientId && session.auth.resource === auth.resource) ||
+    (!session.auth.clientId && !auth.clientId && session.auth.tokenId === auth.tokenId)
+  );
+  if (!samePrincipal) {
     sendJson(res, 404, { jsonrpc: '2.0', error: { code: -32000, message: 'Unknown or unauthorized MCP session.' }, id: null });
     return;
   }
+  Object.assign(session.auth, auth);
   session.lastActivityAt = new Date().toISOString();
   await session.transport.handleRequest(req, res);
 }
@@ -2197,6 +2364,7 @@ async function route(req, res) {
 }
 
 async function shutdown(httpServer) {
+  await audit({ event: 'server_stopping', details: { pid: process.pid, endpoint: MCP_URL } }).catch(() => {});
   for (const session of transports.values()) await session.transport.close().catch(() => {});
   transports.clear();
   httpServer.close(() => process.exit(0));
@@ -2222,6 +2390,13 @@ const httpServer = createServer((req, res) => {
   });
 });
 
+// Keep the public origin ready across the short request/response sessions used
+// by ChatGPT while allowing background agent jobs to run independently.
+httpServer.keepAliveTimeout = 75_000;
+httpServer.headersTimeout = 80_000;
+httpServer.requestTimeout = 0;
+httpServer.maxRequestsPerSocket = 0;
+
 httpServer.on('clientError', (_error, socket) => socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'));
 httpServer.listen(PORT, HOST, () => {
   console.log(`Listening on http://${HOST}:${PORT}`);
@@ -2230,6 +2405,7 @@ httpServer.listen(PORT, HOST, () => {
       if (address.family === 'IPv4' && !address.internal) console.log(`LAN MCP endpoint: http://${address.address}:${PORT}/mcp`);
     }
   }
+  audit({ event: 'server_started', details: { pid: process.pid, endpoint: MCP_URL, host: HOST, port: PORT } }).catch(() => {});
 });
 
 process.on('SIGINT', () => shutdown(httpServer));

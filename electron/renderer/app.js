@@ -9,7 +9,17 @@ const state = {
   previewTimer: null,
   previewBusy: false,
   previewAutoAttempted: false,
-  busy: false
+  busy: false,
+  currentPage: 'overview'
+};
+
+const pages = {
+  overview: ['DESKTOP OPERATIONS', '이 컴퓨터의 AI 제어를 한눈에.', '서버, 연결, 주소 유지 상태를 한 화면에서 확인합니다.'],
+  'live-view': ['LIVE DESKTOP', 'AI가 보고 조작하는 화면.', '화면 미리보기와 마우스·키보드 HUD를 실시간으로 확인합니다.'],
+  activity: ['AUDIT TRAIL', '실제 AI 작업 로그.', '상태 폴링을 제외한 도구 호출, 입력, 프로세스, 파일 변경만 표시합니다.'],
+  connections: ['AI CONNECTORS', '인증과 재연결 상태.', '승인된 AI, 최근 활성 세션, 토큰 자동 갱신 상태를 관리합니다.'],
+  'fixed-domain': ['PERSISTENT ENDPOINT', '재시작해도 같은 MCP 주소.', 'Named Tunnel을 기본 주소로 지정하고 앱 실행 시 자동 복구합니다.'],
+  permissions: ['LOCAL POLICY', '이 PC에서 강제되는 권한.', '연결된 AI별 OAuth 승인과 별개로 로컬 제어 범위를 제한합니다.']
 };
 
 const toolInfo = {
@@ -62,8 +72,24 @@ const eventTitles = {
   auth_exchange: '로컬 페어링 인증',
   background_job_started: '백그라운드 작업 시작',
   background_job_finished: '백그라운드 작업 완료',
-  connector_status_requested: '커넥터 상태 확인'
+  file_activity: '파일 변경 감지',
+  file_activity_suppressed: '파일 로그 상한 도달',
+  file_activity_watcher_error: '파일 감시 오류',
+  server_started: 'MCP 서버 시작',
+  server_stopping: 'MCP 서버 종료'
 };
+
+function setPage(page) {
+  if (!pages[page]) return;
+  state.currentPage = page;
+  $$('.nav-item').forEach(item => item.classList.toggle('active', item.dataset.target === page));
+  $$('.page-view').forEach(view => view.classList.toggle('active', view.dataset.page === page));
+  const [eyebrow, title, description] = pages[page];
+  $('#pageEyebrow').textContent = eyebrow;
+  $('#pageTitle').textContent = title;
+  $('#pageDescription').textContent = description;
+  $('.workspace').scrollTo({ top: 0, behavior: 'smooth' });
+}
 
 function toast(message, level = 'success', timeout = 4200) {
   const node = document.createElement('div');
@@ -137,12 +163,12 @@ function connectionPresentation(status) {
       detail: phaseText, agent: clientName || '웹 GPT / 플러그인', agentLabel: 'PAIRING REQUEST DETECTED'
     },
     authorized: {
-      card: '연결됨', short: 'AI CONNECTED · IDLE', title: 'AI 커넥터 연결됨 · 호출 대기 중',
-      detail: 'OAuth 인증이 유지되고 있으며 다음 MCP 도구 호출을 기다립니다.', agent: clientName || '연결된 AI', agentLabel: 'AUTHORIZED CONNECTOR'
+      card: '재연결 가능', short: 'AUTH READY · RECONNECTABLE', title: 'AI 인증 유지 · 언제든 재연결 가능',
+      detail: 'OAuth 인증과 고정 주체가 유지되어 다음 MCP 호출 때 새 세션으로 연결됩니다.', agent: clientName || '승인된 AI', agentLabel: 'AUTHORIZED · IDLE'
     },
     connected: {
       card: '사용 중', short: 'LIVE MCP CONNECTION', title: '연동된 AI가 이 PC와 통신 중입니다',
-      detail: `${sessions.length}개 MCP 세션에서 실시간 도구 호출을 수신할 수 있습니다.`, agent: clientName || sessions.at(-1)?.client_name || '연결된 AI', agentLabel: 'LIVE AI CONNECTION'
+      detail: `최근 ${status.activeSessionWindowSeconds || 90}초 안에 ${sessions.length}개 MCP 세션의 활동을 감지했습니다.`, agent: clientName || sessions.at(-1)?.client_name || '연결된 AI', agentLabel: 'LIVE AI CONNECTION'
     }
   };
   return { code: stateCode, clientName, phaseText, ...(values[stateCode] || values.disconnected) };
@@ -154,7 +180,7 @@ function updateStatus(status) {
   const connection = connectionPresentation(status);
   document.body.dataset.server = online ? 'online' : 'offline';
   document.body.dataset.connection = connection.code;
-  $('#appVersion').textContent = `v${status.appVersion || '0.2.4'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
+  $('#appVersion').textContent = `v${status.appVersion || '0.2.5'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
   $('#sideServerState').textContent = online ? 'ONLINE' : status.server?.processDetected ? 'STARTING' : 'OFFLINE';
   $('#heroState').textContent = online ? 'MCP CORE ONLINE' : status.server?.processDetected ? 'MCP CORE STARTING' : 'MCP CORE OFFLINE';
   $('#heroTitle').textContent = connection.title;
@@ -172,6 +198,10 @@ function updateStatus(status) {
   $('#activeAiCount').textContent = connection.card;
   $('#activeSessionCount').textContent = connection.short;
   $('#footerStatus').textContent = online ? `${modeLabel(status.mode)} / PID ${status.server.pid}` : 'LOCAL ENGINE STANDBY';
+  const defaultNamed = status.settings?.preferredStartMode === 'named' && Boolean(status.namedTunnel);
+  $('#startDefaultLabel').textContent = defaultNamed ? '고정 도메인 기본 시작' : '임시 HTTPS 기본 시작';
+  $('#startDefault').disabled = state.busy || online;
+  $('#restartServer').disabled = state.busy || !status.lastPublicBaseUrl || (!online && status.mode === 'quick' && !status.tunnel?.running);
   $('#startQuick').disabled = state.busy || online;
   $('#startNamed').disabled = state.busy || online || !status.namedTunnel;
   $('#startLan').disabled = state.busy || online || !status.lanIp;
@@ -184,15 +214,30 @@ function updateStatus(status) {
   $$('.profile-option').forEach(button => button.classList.toggle('active', button.dataset.profile === status.profile));
   $('#accessTtl').textContent = ttlLabel(status.oauthAccessTokenTtlSeconds);
   $('#refreshTtl').textContent = ttlLabel(status.oauthRefreshTokenTtlSeconds);
+  const reconnectGuide = connection.code === 'connected'
+    ? { state: 'live', badge: 'LIVE SESSION', title: '현재 ChatGPT 도구 호출 수신 중', text: `최근 ${status.activeSessionWindowSeconds || 90}초 안에 MCP 세션 활동이 감지되었습니다.` }
+    : connection.code === 'authorized'
+      ? { state: 'ready', badge: 'AUTH READY', title: '서버 인증 유지 · 대화 도구만 확인', text: '재인증은 필요하지 않습니다. ChatGPT가 “도구 비활성화”라고 답하면 플러그인 관리에서 새로 고침한 뒤 해당 대화에서 다시 사용하세요.' }
+      : connection.code === 'pairing'
+        ? { state: 'ready', badge: 'PAIRING', title: 'ChatGPT OAuth 승인 진행 중', text: connection.phaseText }
+        : connection.code === 'offline'
+          ? { state: 'offline', badge: 'SERVER OFF', title: '먼저 MCP 서버를 시작하세요', text: '서버가 온라인이 되면 ChatGPT 플러그인 도구 목록과 인증 상태를 확인할 수 있습니다.' }
+          : { state: 'offline', badge: 'NOT LINKED', title: '승인된 ChatGPT 커넥터 없음', text: 'MCP URL을 ChatGPT 플러그인에 등록하고 OAuth 승인 절차를 완료하세요.' };
+  $('#reconnectPanel').dataset.state = reconnectGuide.state;
+  $('#reconnectGuideState').textContent = reconnectGuide.badge;
+  $('#reconnectGuideTitle').textContent = reconnectGuide.title;
+  $('#reconnectGuideText').textContent = reconnectGuide.text;
   $('#overlayToggle').checked = status.settings?.overlayEnabled !== false;
   $('#previewAutoToggle').checked = status.settings?.previewAutoStart === true;
   $('#lanDirectToggle').checked = status.settings?.lanDirectEnabled === true;
+  $('#autoRestoreToggle').checked = status.settings?.autoRestoreServer === true;
+  $('#autoRestoreToggle').disabled = !status.namedTunnel;
   $('#localOriginText').textContent = status.settings?.lanDirectEnabled && status.lanIp ? `${status.lanIp}:8787` : '127.0.0.1:8787';
   const resolution = status.display?.primary?.bounds;
   $('#screenResolution').textContent = resolution ? `${resolution.width} × ${resolution.height} / PRIMARY` : 'PRIMARY DISPLAY';
 
   if (status.namedTunnel) {
-    $('#domainState').textContent = 'CONFIGURED';
+    $('#domainState').textContent = status.settings?.preferredStartMode === 'named' ? 'DEFAULT · AUTO RESTORE' : 'CONFIGURED';
     $('#domainState').classList.add('good');
     $('#savedDomainText').textContent = new URL(status.namedTunnel.publicBaseUrl).hostname;
     if (!$('#domainUrl').value) $('#domainUrl').value = status.namedTunnel.publicBaseUrl;
@@ -279,6 +324,7 @@ function updateCurrentAgent(status) {
 
 function activityKind(entry) {
   if (entry.success === false || entry.error || /failed|denied/i.test(entry.event)) return 'error';
+  if (/^file_activity/.test(entry.event)) return 'file';
   if (entry.tool) return toolInfo[entry.tool]?.[1] || 'system';
   if (/oauth|session|connector|auth/i.test(entry.event)) return 'system';
   return 'system';
@@ -291,6 +337,9 @@ function activityTitle(entry) {
 
 function activityDetail(entry) {
   const detail = entry.details || {};
+  if (entry.event === 'file_activity') return `${detail.action || 'changed'} · ${detail.path || 'unknown path'}`;
+  if (entry.event === 'file_activity_suppressed') return `${detail.workspace || 'workspace'} · 최대 ${detail.limit || '—'}건`;
+  if (entry.event === 'server_started' || entry.event === 'server_stopping') return detail.endpoint || entry.reason || '로컬 MCP 엔진';
   if (entry.tool === 'hud_status_update') return `${detail.phase || 'working'} · ${detail.title || detail.message || '공개 작업 요약'}`;
   if (entry.tool === 'desktop_control_acquire') return `${detail.purpose || '다단계 작업'} · TTL ${detail.ttl_seconds || 60}초`;
   if (entry.tool === 'desktop_control_release') return '현재 인증 커넥터의 입력 임대 해제';
@@ -303,7 +352,8 @@ function activityDetail(entry) {
   if (entry.tool === 'send_hotkey') return (detail.keys || []).join(' + ');
   if (entry.tool === 'launch_app') return detail.app || '허용된 앱';
   if (entry.tool === 'desktop_region_screenshot') return `x:${detail.x} y:${detail.y} · ${detail.width}×${detail.height}`;
-  if (entry.tool === 'agent_start' || entry.tool === 'cli_start') return `${detail.program || entry.program || 'agent'} · 인수 ${detail.arg_count ?? '—'}개`;
+  if (entry.tool === 'agent_start') return `${detail.agent || 'agent'} · ${detail.workspace || '기본 작업공간'} · ${detail.mode || 'workspace-write'}`;
+  if (entry.tool === 'cli_start') return `${detail.program || entry.program || 'CLI'} · ${detail.workspace || '기본 작업공간'} · 인수 ${detail.arg_count ?? '—'}개`;
   if (entry.jobId) return `job ${entry.jobId.slice(0, 8)} · ${entry.status || entry.kind || ''}`;
   if (entry.error) return String(entry.error).slice(0, 160);
   if (entry.reason) return String(entry.reason).slice(0, 160);
@@ -314,6 +364,7 @@ function activityDetail(entry) {
 
 function addActivity(entry, prepend = true) {
   if (!entry?.event) return;
+  if (entry.event === 'connector_status_requested') return;
   if (prepend) state.activities.unshift(entry);
   else state.activities.push(entry);
   state.activities = state.activities.slice(0, 220);
@@ -461,24 +512,26 @@ async function refreshCloudflare() {
 }
 
 function bindEvents() {
-  $$('.nav-item').forEach(button => button.addEventListener('click', () => {
-    $$('.nav-item').forEach(item => item.classList.toggle('active', item === button));
-    document.getElementById(button.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-  }));
+  $$('.nav-item').forEach(button => button.addEventListener('click', () => setPage(button.dataset.target)));
   $$('.filter').forEach(button => button.addEventListener('click', () => {
     state.filter = button.dataset.filter;
     $$('.filter').forEach(item => item.classList.toggle('active', item === button));
     renderActivity();
   }));
 
-  $('#startQuick').addEventListener('click', () => run(() => api.start('quick')));
+  $('#startDefault').addEventListener('click', () => run(() => api.startPreferred()));
+  $('#restartServer').addEventListener('click', () => run(() => api.restartServer(), '같은 MCP URL로 서버를 재시작했습니다.'));
+  $('#startQuick').addEventListener('click', async () => {
+    if (state.status?.namedTunnel && !confirm('새 임시 주소는 서버나 터널을 다시 시작하면 바뀌며 기존 OAuth 연결을 다시 승인해야 할 수 있습니다. 그래도 임시 HTTPS로 시작할까요?')) return;
+    await run(() => api.start('quick'));
+  });
   $('#startLan').addEventListener('click', async () => {
     if (!confirm('LAN 전용 모드는 공개 HTTPS 터널을 종료하므로 웹 ChatGPT 연결이 끊깁니다. 같은 사설망의 기기에서만 사용할까요?')) return;
     await run(() => api.start('lan'));
   });
   $('#startNamed').addEventListener('click', async () => {
     if (!state.status?.namedTunnel) {
-      $('#fixed-domain').scrollIntoView({ behavior: 'smooth' });
+      setPage('fixed-domain');
       toast('먼저 고정 도메인 설정을 완료하세요.', 'warn');
       return;
     }
@@ -493,6 +546,8 @@ function bindEvents() {
   $('#copyToken').addEventListener('click', () => run(() => api.copyToken(), '페어링 토큰을 복사했습니다. OAuth 승인 화면에만 붙여넣으세요.'));
   $('#copyPairingToken').addEventListener('click', () => run(() => api.copyToken(), '페어링 토큰을 복사했습니다.'));
   $('#openChatGpt').addEventListener('click', () => api.openChatGpt());
+  $('#openChatGptPlugins').addEventListener('click', () => api.openChatGptPlugins());
+  $('#copyReconnectUrl').addEventListener('click', copyUrl);
   $('#openDataFolder').addEventListener('click', () => api.openDataFolder());
   $('#togglePreview').addEventListener('click', () => state.previewTimer ? stopPreview() : run(startPreview));
 
@@ -503,6 +558,15 @@ function bindEvents() {
   }));
   $('#overlayToggle').addEventListener('change', event => run(() => api.setSettings({ overlayEnabled: event.target.checked })));
   $('#previewAutoToggle').addEventListener('change', event => run(() => api.setSettings({ previewAutoStart: event.target.checked })));
+  $('#autoRestoreToggle').addEventListener('change', async event => {
+    if (!state.status?.namedTunnel) {
+      event.target.checked = false;
+      toast('먼저 고정 도메인을 설정하세요.', 'warn');
+      return;
+    }
+    await run(() => api.setSettings({ preferredStartMode: 'named', autoRestoreServer: event.target.checked }), event.target.checked ? '고정 도메인 자동 복구를 켰습니다.' : '자동 복구를 껐습니다. 고정 주소 설정은 유지됩니다.');
+    updateStatus(await api.getStatus());
+  });
   $('#lanDirectToggle').addEventListener('change', async event => {
     const enabled = event.target.checked;
     if (enabled && !confirm('MCP 서버를 이 PC의 LAN IPv4에서도 수신하게 합니다. OAuth는 유지되지만 Windows 방화벽 정책에 따라 다른 기기 접속은 차단될 수 있습니다. 계속할까요?')) {
@@ -532,7 +596,7 @@ function bindEvents() {
       tunnelName: $('#tunnelName').value,
       publicBaseUrl: $('#domainUrl').value,
       useExisting: $('#useExistingTunnel').checked
-    }), '고정 도메인 구성이 완료되었습니다. 이제 고정 도메인 시작 버튼을 사용할 수 있습니다.');
+    }), '고정 도메인을 기본 시작 주소로 설정했습니다.');
     updateStatus(await api.getStatus());
   });
   $('#saveManualTunnel').addEventListener('click', async () => {
@@ -540,7 +604,7 @@ function bindEvents() {
       tunnelName: $('#tunnelName').value,
       publicBaseUrl: $('#domainUrl').value,
       token: $('#manualTunnelToken').value
-    }), '기존 Tunnel URL과 토큰을 안전하게 저장했습니다.');
+    }), '기존 Tunnel URL과 토큰을 저장하고 고정 도메인을 기본값으로 설정했습니다.');
     $('#manualTunnelToken').value = '';
     updateStatus(await api.getStatus());
   });
@@ -548,6 +612,7 @@ function bindEvents() {
 
 async function initialize() {
   bindEvents();
+  setPage('overview');
   const [status, activity] = await Promise.all([api.getStatus(), api.getActivity(180)]);
   updateStatus(status);
   state.activities = [...activity].reverse();

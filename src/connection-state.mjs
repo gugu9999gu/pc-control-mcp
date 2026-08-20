@@ -23,6 +23,7 @@ function baseState(status, activeSessions, authorizedConnectors, pairingAttempts
   return {
     status,
     detected: status !== 'disconnected',
+    reconnectable: authorizedConnectors.length > 0,
     client_id: subject?.client_id || null,
     client_name: subject?.client_name || null,
     pairing_phase: subject?.pairing_status || null,

@@ -6,12 +6,12 @@ Windows PC를 OAuth로 보호된 MCP 서버로 연결해 AI가 화면을 확인�
 
 ## 빠른 시작
 
-GitHub Releases에서 `Remote-MCP-Control-0.2.4-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
+GitHub Releases에서 `Remote-MCP-Control-0.2.5-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
 
 현재 포터블 빌드는 Authenticode 상용 코드서명이 없어 Windows SmartScreen에 알 수 없는 게시자 경고가 나타날 수 있습니다. 반드시 이 저장소의 Releases에서만 내려받고, 같은 릴리스의 `SHA256SUMS.txt`와 파일의 SHA-256 값을 비교하십시오. 값이 다르면 실행하지 마십시오. 이 경고를 없애려면 향후 신뢰할 수 있는 Windows 코드서명 인증서가 필요합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.4-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.5-x64.exe
 ```
 
 ```text
@@ -21,12 +21,14 @@ MCP-Remote-Control-Launcher.cmd
 처음 소스로 실행하면 잠긴 버전의 Node/Electron 의존성을 설치합니다. 실행기에서 다음 기능을 사용할 수 있습니다.
 
 - 서버와 터널 실행·종료, PID와 상태 표시
+- 관제·라이브 화면·실행 로그·AI 연결·고정 도메인·권한을 분리한 페이지형 UI
 - 기본 모니터 실시간 미리보기
 - 연결된 AI, 활성 MCP 세션, 승인 권한과 연결 해제
-- OAuth·도구·마우스·키보드·프로세스·백그라운드 작업의 실시간 로그
+- OAuth·도구·마우스·키보드·프로세스·백그라운드 작업·AI 작업공간 파일 변경의 실시간 로그
 - 실제 AI 입력 전에 표시되는 커스텀 포인터, 타깃, 안전 프레임, 키보드 개인정보 보호 HUD
 - 화면 중앙보다 약간 아래에 표시되는 작업 요약·진행률·대상·최근 실행 로그 HUD
 - 임시 HTTPS Quick Tunnel, 사설 LAN, 고정 Cloudflare Named Tunnel
+- 같은 터널 주소를 보존하는 서버 전용 재시작과 Named Tunnel 기본 시작·자동 복구
 - 공개 HTTPS 연결을 유지하면서 이 PC의 LAN IPv4 주소도 함께 여는 하이브리드 IP 모드
 - `safe`, `agent`, `full` 로컬 제어 프로필
 
@@ -35,11 +37,11 @@ MCP-Remote-Control-Launcher.cmd
 - **연결 안 됨**: 서버는 온라인이지만 외부 OAuth 커넥터나 활성 세션이 감지되지 않음
 - **페어링 중**: 웹 GPT/플러그인이 등록되어 승인 화면, 페어링 토큰 입력 또는 토큰 교환을 진행 중
 - **연결됨**: OAuth 인증과 갱신 토큰이 유효하며 다음 도구 호출을 기다리는 중
-- **사용 중**: 실제 MCP 세션이 열려 이 PC와 통신 중
+- **사용 중**: 최근 90초 안에 실제 MCP 세션 활동이 감지됨
 
 중단된 페어링 표시는 기본 10분 뒤 자동 만료되어 **연결 안 됨**으로 돌아갑니다. 실행기 자체의 로컬 OAuth 검증은 외부 AI 연결 수와 상태에 포함되지 않습니다.
 
-외부 연결을 빠르게 시험하려면 **임시 HTTPS 시작**을 누릅니다. 고정 주소가 필요하면 **고정 도메인**에서 Named Tunnel을 구성한 뒤 **고정 도메인 시작**을 사용합니다.
+외부 연결을 빠르게 시험하려면 **기본 서버 시작**을 누릅니다. 고정 주소가 아직 없으면 임시 HTTPS가 시작되고, Named Tunnel을 한 번 구성하면 고정 주소가 자동으로 기본값이 됩니다. 실행 중인 터널의 URL을 유지하면서 MCP 코어만 다시 띄우려면 **주소 유지 재시작**을 사용합니다.
 
 같은 공유기 안의 다른 PC에서도 이 서버를 써야 하면 **고정 도메인 → 하이브리드 IP 모드**를 켭니다. 서버는 `0.0.0.0:8787`에 수신하고 실행기가 현재 기본 네트워크의 IPv4를 감지해 `http://LAN-IP:8787/mcp`를 함께 표시·복사합니다. 공개 HTTPS URL과 OAuth 리소스는 그대로라 웹 ChatGPT 연결을 다시 등록하지 않아도 됩니다. 단, 다른 LAN 기기의 실제 접속은 Windows 네트워크 프로필과 방화벽 정책에 따라 차단될 수 있습니다.
 
@@ -62,7 +64,15 @@ https://YOUR-HOST.example.com/mcp
 - 백그라운드 작업 로그 확인과 중지
 - 로컬 허용 목록의 CLI 실행(`full` 프로필 전용)
 
-OAuth 액세스 토큰 기본 수명은 7일, 갱신 토큰은 90일이며 정상 클라이언트는 자동 갱신합니다. Quick Tunnel 주소가 바뀌면 OAuth 리소스 자체가 바뀌므로 다시 인증해야 합니다. 반복 인증을 피하려면 고정 Named Tunnel을 사용하십시오.
+OAuth 액세스 토큰 기본 수명은 30일, 갱신 토큰은 365일이며 정상 클라이언트는 자동 갱신합니다. 액세스 토큰이 교체되어도 같은 OAuth 클라이언트의 MCP 세션은 유지됩니다. Quick Tunnel 주소가 바뀌면 OAuth 리소스 자체가 바뀌므로 다시 인증해야 합니다. 반복 인증을 피하려면 고정 Named Tunnel을 사용하십시오.
+
+ChatGPT가 **도구 비활성화**라고 답했는데 실행기의 AI 연결 페이지에는 **승인됨 · 0개 활성 세션**으로 보이면 서버나 OAuth가 끊긴 것이 아닙니다. 그 요청이 이 PC에 도달하기 전에 해당 ChatGPT 대화에서 플러그인 도구가 비활성화된 상태입니다. 실행기의 **AI 연결 → ChatGPT 플러그인 열기**를 누른 뒤 다음 순서로 복구합니다.
+
+1. `Remote MCP Control`을 엽니다.
+2. **플러그인 작업 → 관리 → 새로 고침**으로 현재 URL의 도구를 다시 동기화합니다.
+3. 기존 대화에서 다시 도구를 선택하거나 **채팅에서 사용해 보기**로 플러그인이 활성화된 새 대화를 엽니다.
+
+이 동작은 기존 OAuth 승인을 재사용하므로 페어링 토큰을 다시 입력하지 않습니다. 관리 화면의 새로 고침으로 실행기에 `OpenAI (chatgpt.com)`의 새 MCP 세션이 표시되면 서버까지 도달한 것입니다. ChatGPT의 대화별 도구 활성 상태는 원격 서버가 강제로 고정할 수 없으므로, 실행기는 서버 인증 유지 상태와 최근 실제 세션을 분리해 표시합니다.
 
 ## 중앙 작업 메시지 HUD
 
@@ -113,7 +123,7 @@ Codex·Claude·CLI 백그라운드 작업도 정규화된 작업 폴더를 예�
 - 에이전트: `agent_start`, `background_job_list`, `background_job_output`, `background_job_stop`
 - 허용 CLI: `cli_start`(`full` 로컬 프로필에서만 사용)
 
-모든 도구 수명주기는 `data\audit.ndjson`에 토큰 없이 기록됩니다. Electron 실행기가 시작한 서버는 실제 입력보다 약 220ms 먼저 `tool_start`를 기록해 로컬 HUD가 먼저 보이게 합니다.
+모든 도구 수명주기는 `data\audit.ndjson`에 토큰 없이 기록됩니다. 실행기의 내부 상태 폴링은 감사 로그와 UI에서 제외됩니다. `agent_start`·`cli_start` 작업이 실행되는 동안에는 해당 작업 폴더의 생성·수정·삭제도 파일 내용 없이 기록하며, `.git`, `node_modules`, 빌드 캐시와 산출물 폴더는 소음을 줄이기 위해 제외합니다. Electron 실행기가 시작한 서버는 실제 입력보다 약 220ms 먼저 `tool_start`를 기록해 로컬 HUD가 먼저 보이게 합니다.
 
 ## 로컬 제어 프로필
 
@@ -135,9 +145,9 @@ Quick Tunnel의 `trycloudflare.com` 호스트명은 재시작할 때 바뀝니�
 2. 실행기에서 cloudflared 설치·로그인 상태를 확인합니다.
 3. 영문, 숫자, 하이픈으로 된 고유 터널 이름을 입력합니다. 예: `remote-mcp-admin-pc`
 4. `https://mcp.example.com`처럼 경로가 없는 HTTPS 원본 주소를 입력합니다.
-5. Named Tunnel과 DNS 경로를 만든 뒤 고정 도메인 모드로 시작합니다.
+5. Named Tunnel과 DNS·로컬 ingress 경로를 만든 뒤 고정 도메인 모드로 시작합니다.
 
-터널 실행 토큰은 현재 Windows 사용자의 보안 저장소로 암호화되며 UI나 로그에 평문으로 표시되지 않습니다. 기존 DNS 레코드는 자동 덮어쓰지 않습니다. 고정 주소의 최종 MCP URL은 `https://mcp.example.com/mcp`입니다.
+자동 구성은 로컬 관리형 Tunnel 자격 증명과 `data\cloudflared-named-tunnel.yml`을 사용해 고정 호스트를 `127.0.0.1:8787`에 연결합니다. 기존 원격 관리형 Tunnel을 수동 등록할 때만 실행 토큰을 Windows 보안 저장소로 암호화하며 UI나 로그에 평문으로 표시하지 않습니다. 구성이 끝나면 Named Tunnel이 기본 시작 모드가 되고 실행기 재실행 시 같은 URL로 자동 복구됩니다. 기존 DNS 레코드는 자동 덮어쓰지 않습니다. 고정 주소의 최종 MCP URL은 `https://mcp.example.com/mcp`입니다.
 
 LAN 전용 모드는 `http://LAN-IP:8787/mcp`만 제공하고 공개 터널을 종료합니다. 하이브리드 IP 모드는 같은 LAN 주소와 기존 Quick/Named HTTPS 주소를 동시에 유지합니다. 신뢰할 수 있는 사설망에서만 IP 수신을 켜고, 다른 PC의 접속이 필요하면 네트워크를 Private으로 확인한 뒤 관리자 PowerShell에서 `scripts\install-firewall.ps1`을 별도로 실행하십시오. 이 스크립트는 TCP/8787을 Private 프로필의 LocalSubnet에만 엽니다.
 
@@ -199,7 +209,8 @@ Portable EXE는 `dist-electron`에 생성됩니다. 런타임 `data` 폴더, 인
 
 - **토큰이 유효하지 않음**: 현재 실행 중인 서버의 `bootstrap-token.txt`를 사용하고 오래된 Quick Tunnel URL을 재사용하지 마십시오.
 - **Origin not allowed**: 최신 서버를 재시작하고 ChatGPT가 연 현재 `/oauth/authorize` 주소의 호스트가 등록한 `/mcp` 주소와 같은지 확인하십시오.
-- **매 호출마다 재인증**: 고정 Named Tunnel을 사용하고 커넥터 권한을 임의로 해제하지 마십시오. 서버의 기본 갱신 토큰 수명은 90일입니다.
+- **매 호출마다 재인증**: 고정 Named Tunnel을 기본값으로 사용하고 커넥터 권한을 임의로 해제하지 마십시오. 기본 액세스/갱신 수명은 30일/365일이며 갱신 후에도 같은 OAuth 클라이언트 세션을 허용합니다.
+- **로그에 상태 확인만 보임**: v0.2.5 이상으로 서버를 주소 유지 재시작하십시오. 이전 빌드가 쌓은 상태 폴링 행은 새 UI가 자동으로 숨깁니다.
 - **Desktop control is reserved**: 다른 AI가 다단계 입력 임대를 보유 중입니다. `desktop_control_status`를 확인하고 해제 또는 만료 후 다시 시도하십시오.
 - **Workspace is already reserved**: 같은 폴더에서 다른 백그라운드 작업이 실행 중입니다. 완료를 기다리거나 별도 Git worktree를 사용하십시오.
 - **HUD가 보이지 않음**: 실행기에서 바탕화면 AI HUD를 켜고 **AI 조작 HUD 미리보기**를 실행하십시오.

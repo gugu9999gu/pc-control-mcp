@@ -140,7 +140,12 @@ body[data-server="online"] .status-light { background: var(--cyan); box-shadow: 
 .eyebrow { margin: 0 0 7px; color: #668381; font: 700 9px/1.3 Consolas, monospace; letter-spacing: .15em; text-transform: uppercase; }
 .eyebrow span { color: var(--cyan); }
 .topline h2 { margin: 0; font-size: clamp(24px, 2.2vw, 34px); font-weight: 620; letter-spacing: -.04em; }
+.page-description { margin: 7px 0 0; color: #67817e; font-size: 10px; }
 .top-actions, .panel-actions, .command-buttons, .domain-action-row { display: flex; align-items: center; gap: 9px; }
+.command-buttons, .domain-action-row { flex-wrap: wrap; }
+
+.page-view:not(.active) { display: none !important; }
+.page-view.active { animation: page-enter .24s ease both; }
 
 .panel {
   position: relative;
@@ -295,6 +300,7 @@ body[data-connection="connected"] .agent-presence { border-color: rgba(69, 240, 
 .activity-action { display: flex; align-items: center; gap: 8px; color: #c0d3d0; font-weight: 600; }
 .activity-action i { width: 7px; height: 7px; border: 1px solid var(--cyan); border-radius: 2px; transform: rotate(45deg); }
 .activity-row[data-kind="input"] .activity-action i { border-color: var(--violet); }
+.activity-row[data-kind="file"] .activity-action i { border-color: var(--cyan-soft); box-shadow: 0 0 7px rgba(152, 255, 233, .24); }
 .activity-row[data-kind="system"] .activity-action i { border-color: var(--amber); }
 .activity-detail { overflow: hidden; color: #647f7c; font: 9px Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 .activity-state { justify-self: end; padding: 4px 6px; border-radius: 4px; color: var(--cyan); background: rgba(69, 240, 204, .07); font: 700 7px Consolas, monospace; }
@@ -319,6 +325,19 @@ body[data-connection="connected"] .agent-presence { border-color: rgba(69, 240, 
 .token-lifetime strong { margin: 7px 0 3px; color: var(--cyan-soft); font: 600 23px Consolas, monospace; }
 .token-lifetime small { color: #66817f; font-size: 9px; }
 .token-panel .secondary-button { margin-top: 18px; }
+.reconnect-panel { grid-column: 1 / -1; padding: 22px; }
+.reconnect-layout { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(440px, 1.5fr) auto; gap: 18px; align-items: center; }
+.reconnect-copy p { margin: 0; color: #b8cdca; font-size: 11px; line-height: 1.55; }
+.reconnect-copy small { display: block; margin-top: 7px; color: #637d7a; font-size: 9px; line-height: 1.5; }
+.reconnect-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 0; padding: 0; list-style: none; }
+.reconnect-steps li { min-height: 70px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255, 255, 255, .016); }
+.reconnect-steps span, .reconnect-steps b, .reconnect-steps small { display: block; }
+.reconnect-steps span { color: var(--cyan); font: 700 8px Consolas, monospace; }
+.reconnect-steps b { margin-top: 8px; font-size: 10px; }
+.reconnect-steps small { margin-top: 4px; color: #617b78; font-size: 8px; line-height: 1.4; }
+.reconnect-actions { display: grid; min-width: 205px; gap: 8px; }
+.reconnect-panel[data-state="live"] .count-badge { border-color: rgba(69, 240, 204, .3); color: var(--cyan); }
+.reconnect-panel[data-state="ready"] .count-badge { border-color: rgba(143, 145, 255, .3); color: #c3c4ff; }
 
 .domain-layout { display: grid; grid-template-columns: 1fr minmax(360px, .78fr); gap: 32px; }
 .domain-explainer { padding-right: 25px; border-right: 1px solid var(--line); }
@@ -345,6 +364,8 @@ input:focus, textarea:focus { border-color: rgba(69, 240, 204, .45); box-shadow:
 details { border-top: 1px solid var(--line); padding-top: 12px; }
 summary { color: #718b88; cursor: pointer; font-size: 10px; }
 details label { margin: 12px 0; }
+.manual-note { color: #6f8986; font-size: 9px; line-height: 1.55; }
+.manual-note code { color: var(--cyan-soft); }
 
 .permissions-grid { grid-template-columns: 1.2fr .8fr; }
 .profile-options { display: grid; grid-template-columns: repeat(3, 1fr); gap: 9px; }
@@ -399,6 +420,7 @@ footer { display: flex; justify-content: space-between; padding: 14px 2px 0; col
 @keyframes click-wave { from { opacity: 1; transform: scale(.2); } to { opacity: 0; transform: scale(1.8); } }
 @keyframes hud-in { 0% { opacity: 0; transform: translate(-50%, 12px); } 12%, 78% { opacity: 1; transform: translate(-50%, 0); } 100% { opacity: 0; transform: translate(-50%, -8px); } }
 @keyframes toast-in { from { opacity: 0; transform: translateX(18px); } }
+@keyframes page-enter { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
 
 @media (max-width: 1250px) {
   .app-shell { grid-template-columns: 210px 1fr; }
@@ -406,5 +428,7 @@ footer { display: flex; justify-content: space-between; padding: 14px 2px 0; col
   .workspace { padding-right: 22px; padding-left: 22px; }
   .command-deck { grid-template-columns: 210px minmax(400px,1fr) 130px; }
   .command-copy { padding: 28px 25px; }
+  .reconnect-layout { grid-template-columns: 1fr; }
+  .reconnect-actions { grid-template-columns: 1fr 1fr; }
   .busy-cover { left: 210px; }
 }

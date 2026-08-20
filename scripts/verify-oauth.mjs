@@ -306,6 +306,53 @@ if (capabilities.profile === 'full' && requestedPermissions.includes('cli')) {
   cliVerification = { job_id: started.job_id, status: latest.status };
 }
 
+let fileActivityVerification = null;
+if (process.env.VERIFY_FILE_AUDIT === '1' && capabilities.profile === 'full' && requestedPermissions.includes('cli')) {
+  const fileName = `.mcp-file-audit-${Date.now()}-${randomBytes(3).toString('hex')}.tmp`;
+  const childScript = [
+    "const fs = require('node:fs');",
+    `const file = ${JSON.stringify(fileName)};`,
+    "fs.writeFileSync(file, 'created');",
+    "setTimeout(() => {",
+    "  fs.appendFileSync(file, '\\nmodified');",
+    "  setTimeout(() => fs.unlinkSync(file), 500);",
+    "}, 500);"
+  ].join('\n');
+  const started = toolJson(await callTool(600, 'cli_start', {
+    program: 'node',
+    args: ['-e', childScript],
+    workspace: projectRoot,
+    timeout_seconds: 30
+  }));
+  assert(started.job_id, 'file-activity verification job did not start');
+  let latest = started;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    latest = toolJson(await callTool(601 + attempt, 'background_job_output', {
+      job_id: started.job_id,
+      max_chars: 4_096
+    }));
+    if (latest.ended_at) break;
+  }
+  assert(latest.status === 'succeeded', `file-activity verification failed: ${latest.status}`);
+  await new Promise(resolve => setTimeout(resolve, 500));
+  const auditRows = (await readFile(join(projectRoot, 'data', 'audit.ndjson'), 'utf8'))
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .map(line => {
+      try { return JSON.parse(line); } catch { return null; }
+    })
+    .filter(row => row?.event === 'file_activity' && row.job_id === started.job_id);
+  const matchingRows = auditRows.filter(row => row.details?.path === fileName);
+  assert(matchingRows.length >= 2, `expected file audit events for ${fileName}, received ${matchingRows.length}`);
+  assert(!auditRows.some(row => /^data\//i.test(row.details?.path || '')), 'file watcher captured the MCP data directory');
+  fileActivityVerification = {
+    job_id: started.job_id,
+    path: fileName,
+    actions: [...new Set(matchingRows.map(row => row.details.action))]
+  };
+}
+
 let agentVerification = null;
 const requestedAgentVerification = process.env.VERIFY_AGENT === '1' ? 'codex' : process.env.VERIFY_AGENT;
 if (requestedAgentVerification) {
@@ -375,6 +422,7 @@ console.log(JSON.stringify({
   requested_permissions: requestedPermissions,
   permission_enforcement: permissionEnforcement,
   cli_verification: cliVerification,
+  file_activity_verification: fileActivityVerification,
   agent_verification: agentVerification,
   client_id: registration.client_id,
   tools: toolNames

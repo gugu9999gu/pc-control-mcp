@@ -20,6 +20,7 @@ const LOCAL_BASE_URL = 'http://127.0.0.1:8787';
 const VALID_PROFILES = new Set(['safe', 'agent', 'full']);
 const VALID_START_MODES = new Set(['quick', 'named', 'lan']);
 const VALID_CONNECTION_STATES = new Set(['offline', 'disconnected', 'pairing', 'authorized', 'connected']);
+const HIDDEN_TELEMETRY_EVENTS = new Set(['connector_status_requested']);
 
 function parseJson(text, fallback = null) {
   try { return JSON.parse(String(text).replace(/^\uFEFF/, '')); } catch { return fallback; }
@@ -135,7 +136,8 @@ export class McpController extends EventEmitter {
       policy: join(this.dataDir, 'control-policy.json'),
       settings: join(this.dataDir, 'electron-settings.json'),
       namedConfig: join(this.dataDir, 'electron-named-tunnel-config.json'),
-      namedToken: join(this.dataDir, 'electron-named-tunnel-token.bin')
+      namedToken: join(this.dataDir, 'electron-named-tunnel-token.bin'),
+      namedCloudflaredConfig: join(this.dataDir, 'cloudflared-named-tunnel.yml')
     };
     this.busy = false;
     this.auditOffset = 0;
@@ -185,10 +187,16 @@ export class McpController extends EventEmitter {
 
   async getSettings() {
     const current = await this.readJson(this.paths.settings, {});
+    const namedConfigured = Boolean((await this.readJson(this.paths.namedConfig, null))?.public_base_url);
+    const preferredStartMode = VALID_START_MODES.has(current?.preferredStartMode)
+      ? current.preferredStartMode
+      : namedConfigured ? 'named' : 'quick';
     return {
       overlayEnabled: current?.overlayEnabled !== false,
       previewAutoStart: current?.previewAutoStart === true,
-      lanDirectEnabled: current?.lanDirectEnabled === true
+      lanDirectEnabled: current?.lanDirectEnabled === true,
+      preferredStartMode: preferredStartMode === 'named' && !namedConfigured ? 'quick' : preferredStartMode,
+      autoRestoreServer: namedConfigured && current?.autoRestoreServer !== false
     };
   }
 
@@ -197,7 +205,9 @@ export class McpController extends EventEmitter {
     const next = {
       overlayEnabled: typeof patch.overlayEnabled === 'boolean' ? patch.overlayEnabled : current.overlayEnabled,
       previewAutoStart: typeof patch.previewAutoStart === 'boolean' ? patch.previewAutoStart : current.previewAutoStart,
-      lanDirectEnabled: typeof patch.lanDirectEnabled === 'boolean' ? patch.lanDirectEnabled : current.lanDirectEnabled
+      lanDirectEnabled: typeof patch.lanDirectEnabled === 'boolean' ? patch.lanDirectEnabled : current.lanDirectEnabled,
+      preferredStartMode: VALID_START_MODES.has(patch.preferredStartMode) ? patch.preferredStartMode : current.preferredStartMode,
+      autoRestoreServer: typeof patch.autoRestoreServer === 'boolean' ? patch.autoRestoreServer : current.autoRestoreServer
     };
     if (next.lanDirectEnabled === current.lanDirectEnabled) {
       await this.writeJson(this.paths.settings, next);
@@ -491,6 +501,26 @@ export class McpController extends EventEmitter {
     return pid;
   }
 
+  async spawnNamedTunnel(cloudflared, named) {
+    await this.clearTunnelLogs();
+    let args;
+    let env = process.env;
+    if (named.management === 'local-config-v1') {
+      args = ['tunnel', '--no-autoupdate', '--config', named.configPath, 'run', named.tunnelName];
+    } else {
+      env = { ...process.env, TUNNEL_TOKEN: named.token };
+      args = ['tunnel', '--no-autoupdate', 'run'];
+    }
+    const pid = await this.spawnDetached(cloudflared, args, {
+      stdoutPath: this.paths.tunnelStdout,
+      stderrPath: this.paths.tunnelStderr,
+      env
+    });
+    await writeFile(this.paths.tunnelPid, String(pid), 'ascii');
+    this.action(`Cloudflare Named Tunnel 시작: PID ${pid}`);
+    return pid;
+  }
+
   async waitForQuickTunnelUrl(timeoutMs = 50_000) {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -502,10 +532,53 @@ export class McpController extends EventEmitter {
     return null;
   }
 
+  modeFromPublicUrl(publicBaseUrl, named) {
+    const value = String(publicBaseUrl || '');
+    if (value.includes('trycloudflare.com')) return 'quick';
+    if (value && named?.publicBaseUrl === value) return 'named';
+    if (value.startsWith('http://') && !value.includes('127.0.0.1')) return 'lan';
+    return value ? 'custom' : null;
+  }
+
+  async localHealth() {
+    try {
+      const response = await fetch(`${LOCAL_BASE_URL}/healthz`, { signal: AbortSignal.timeout(1800), cache: 'no-store' });
+      return response.ok;
+    } catch {
+      return false;
+    }
+  }
+
   async start(mode) {
     if (!VALID_START_MODES.has(mode)) throw new Error('지원하지 않는 서버 시작 모드입니다.');
     return this.runExclusive('서버 시작', async () => {
-      this.action('기존 MCP 프로세스 상태를 정리하고 있습니다…');
+      const savedUrl = await this.readText(this.paths.publicUrl);
+      const savedNamed = await this.getNamedTunnel(false);
+      const currentMode = this.modeFromPublicUrl(savedUrl, savedNamed);
+      const managed = await this.managedProcesses(true);
+      const healthy = await this.localHealth();
+
+      if (mode === currentMode && savedUrl) {
+        const routeReady = mode === 'lan' || managed.tunnels.length > 0;
+        if (healthy && routeReady) {
+          this.action(`이미 같은 주소로 실행 중입니다: ${savedUrl}/mcp`, 'success');
+          return this.getStatus();
+        }
+        if (!healthy && routeReady) {
+          this.action(`터널 주소를 유지한 채 MCP 서버만 복구합니다: ${savedUrl}/mcp`);
+          await this.stopServersOnly();
+          const settings = await this.getSettings();
+          await this.ensureLocalServer(savedUrl, mode === 'lan' ? '0.0.0.0' : this.listenHost(settings));
+          this.action('기존 MCP URL과 OAuth 인증을 유지해 서버를 복구했습니다.', 'success');
+          return this.getStatus();
+        }
+      }
+
+      if (mode === 'quick' && currentMode === 'quick' && savedUrl && managed.tunnels.length === 0) {
+        this.action('Quick Tunnel 프로세스가 없어 기존 임시 주소를 복구할 수 없습니다. 새 주소를 발급합니다.', 'warn');
+      } else {
+        this.action('요청한 실행 모드에 맞게 MCP 프로세스 상태를 정리하고 있습니다…');
+      }
       await this.stopManaged();
 
       if (mode === 'lan') {
@@ -527,16 +600,8 @@ export class McpController extends EventEmitter {
         const named = await this.getNamedTunnel(true);
         this.action(`고정 도메인 서버를 시작합니다: ${named.publicBaseUrl}`);
         await this.ensureLocalServer(named.publicBaseUrl, listenHost);
-        await this.clearTunnelLogs();
-        const env = { ...process.env, TUNNEL_TOKEN: named.token };
-        const pid = await this.spawnDetached(cloudflared, ['tunnel', '--no-autoupdate', 'run', '--url', LOCAL_BASE_URL], {
-          stdoutPath: this.paths.tunnelStdout,
-          stderrPath: this.paths.tunnelStderr,
-          env
-        });
-        await writeFile(this.paths.tunnelPid, String(pid), 'ascii');
+        await this.spawnNamedTunnel(cloudflared, named);
         await writeFile(this.paths.publicUrl, named.publicBaseUrl, 'ascii');
-        this.action(`Cloudflare Named Tunnel 시작: PID ${pid}`);
         if (!(await this.waitForHttp(`${named.publicBaseUrl}/healthz`, 55_000, { external: true }))) {
           this.action('고정 도메인이 아직 외부에서 응답하지 않습니다. DNS 전파와 Tunnel 로그를 확인하세요.', 'warn');
         } else {
@@ -564,6 +629,45 @@ export class McpController extends EventEmitter {
       }
       return this.getStatus();
     });
+  }
+
+  async startPreferred() {
+    const settings = await this.getSettings();
+    return this.start(settings.preferredStartMode || 'quick');
+  }
+
+  async restartServer() {
+    return this.runExclusive('주소 유지 서버 재시작', async () => {
+      const publicBaseUrl = await this.readText(this.paths.publicUrl);
+      if (!publicBaseUrl) throw new Error('유지할 MCP 주소가 없습니다. 먼저 서버를 시작하세요.');
+      const named = await this.getNamedTunnel(false);
+      const mode = this.modeFromPublicUrl(publicBaseUrl, named);
+      const managed = await this.managedProcesses(true);
+      if (mode === 'quick' && managed.tunnels.length === 0) {
+        throw new Error('Quick Tunnel이 종료되어 기존 임시 주소를 유지할 수 없습니다. 새 임시 주소를 시작하거나 고정 도메인을 설정하세요.');
+      }
+      this.action(`MCP 주소를 유지하고 서버 프로세스만 재시작합니다: ${publicBaseUrl}/mcp`);
+      await this.stopServersOnly();
+      const settings = await this.getSettings();
+      await this.ensureLocalServer(publicBaseUrl, mode === 'lan' ? '0.0.0.0' : this.listenHost(settings));
+
+      if (mode === 'named' && managed.tunnels.length === 0) {
+        const cloudflared = await this.resolveCloudflared();
+        if (!cloudflared) throw new Error('cloudflared.exe를 찾지 못했습니다.');
+        await this.spawnNamedTunnel(cloudflared, await this.getNamedTunnel(true));
+      }
+      this.action('MCP URL과 저장된 OAuth 인증을 유지한 채 서버 재시작을 완료했습니다.', 'success');
+      return this.getStatus();
+    });
+  }
+
+  async restorePreferredServer() {
+    const settings = await this.getSettings();
+    if (!settings.autoRestoreServer || settings.preferredStartMode !== 'named') return this.getStatus();
+    const named = await this.getNamedTunnel(false);
+    if (!named) return this.getStatus();
+    this.action(`고정 도메인 자동 복구를 시작합니다: ${named.publicBaseUrl}/mcp`);
+    return this.start('named');
   }
 
   async preferredLanIp() {
@@ -616,20 +720,10 @@ export class McpController extends EventEmitter {
     const named = await this.getNamedTunnel(false);
     const settings = await this.getSettings();
     const policy = await this.readJson(this.paths.policy, null);
-    let localHealthy = false;
-    try {
-      const response = await fetch(`${LOCAL_BASE_URL}/healthz`, { signal: AbortSignal.timeout(1800), cache: 'no-store' });
-      localHealthy = response.ok;
-    } catch { /* Offline. */ }
+    const localHealthy = await this.localHealth();
     const connectorStatus = localHealthy ? await this.getConnectorStatus() : null;
     const connectionState = normalizeConnectionState(localHealthy, connectorStatus);
-    const mode = lastPublicBaseUrl.includes('trycloudflare.com')
-      ? 'quick'
-      : lastPublicBaseUrl && named?.publicBaseUrl === lastPublicBaseUrl
-        ? 'named'
-        : lastPublicBaseUrl.startsWith('http://') && !lastPublicBaseUrl.includes('127.0.0.1')
-          ? 'lan'
-          : lastPublicBaseUrl ? 'custom' : null;
+    const mode = this.modeFromPublicUrl(lastPublicBaseUrl, named);
     const activePublicBaseUrl = localHealthy ? lastPublicBaseUrl : '';
     const lanIp = await this.preferredLanIp().catch(() => null);
     const lanMcpUrl = localHealthy && settings.lanDirectEnabled && lanIp ? `http://${lanIp}:8787/mcp` : null;
@@ -661,7 +755,10 @@ export class McpController extends EventEmitter {
       oauthAccessTokenTtlSeconds: connectorStatus?.oauth_access_token_ttl_seconds || null,
       oauthRefreshTokenTtlSeconds: connectorStatus?.oauth_refresh_token_ttl_seconds || null,
       pairingStateTtlSeconds: connectorStatus?.pairing_state_ttl_seconds || null,
+      activeSessionWindowSeconds: connectorStatus?.active_session_window_seconds || null,
+      retainedSessionCount: connectorStatus?.retained_mcp_session_count || 0,
       namedTunnel: named ? { publicBaseUrl: named.publicBaseUrl, tunnelName: named.tunnelName } : null,
+      endpointPersistent: activePublicBaseUrl ? mode === 'named' || mode === 'lan' : settings.preferredStartMode === 'named',
       settings
     };
   }
@@ -744,9 +841,11 @@ export class McpController extends EventEmitter {
       version: 1,
       public_base_url: normalizedUrl,
       tunnel_name: normalizedName,
+      management: 'remote-token-v1',
       token_storage: 'electron-safe-storage-v1',
       updated_at: new Date().toISOString()
     });
+    await this.updateSettings({ preferredStartMode: 'named', autoRestoreServer: true });
     this.action(`고정 도메인 설정을 안전하게 저장했습니다: ${normalizedUrl}`, 'success');
     this.emit('status-changed');
     return { publicBaseUrl: normalizedUrl, tunnelName: normalizedName };
@@ -757,9 +856,16 @@ export class McpController extends EventEmitter {
     if (!config?.public_base_url) return null;
     const result = {
       publicBaseUrl: config.public_base_url,
-      tunnelName: config.tunnel_name || ''
+      tunnelName: config.tunnel_name || '',
+      management: config.management || 'remote-token-v1',
+      tunnelId: config.tunnel_id || null,
+      configPath: config.cloudflared_config || this.paths.namedCloudflaredConfig
     };
     if (!includeToken) return result;
+    if (result.management === 'local-config-v1') {
+      try { await stat(result.configPath); } catch { throw new Error('저장된 Named Tunnel 설정 파일을 찾지 못했습니다. 고정 도메인 마법사를 다시 실행하세요.'); }
+      return result;
+    }
     if (!this.secureStore?.available()) throw new Error('Windows 보안 저장소를 사용할 수 없습니다.');
     let encrypted;
     try { encrypted = await readFile(this.paths.namedToken); } catch { throw new Error('저장된 Named Tunnel 토큰을 찾지 못했습니다. 설정 마법사를 다시 실행하세요.'); }
@@ -787,6 +893,10 @@ export class McpController extends EventEmitter {
         this.action(`기존 Cloudflare Tunnel '${normalizedName}'을 사용합니다.`);
       }
 
+      const refreshedAccount = await this.cloudflareStatus();
+      const configuredTunnel = refreshedAccount.tunnels.find(item => item.name === normalizedName);
+      if (!configuredTunnel?.id) throw new Error('생성된 Cloudflare Tunnel ID를 확인하지 못했습니다.');
+
       const hostname = new URL(normalizedUrl).hostname;
       this.action(`${hostname} DNS 레코드를 Tunnel에 연결합니다…`);
       const routeResult = await this.runCapture(executable, ['tunnel', 'route', 'dns', normalizedName, hostname], { timeoutMs: 60_000 });
@@ -794,11 +904,41 @@ export class McpController extends EventEmitter {
         throw new Error(routeResult.stderr.trim() || 'DNS 연결에 실패했습니다. 기존 DNS 레코드가 있다면 Cloudflare에서 확인하세요.');
       }
 
-      this.action('Tunnel 실행 토큰을 안전하게 가져오고 있습니다…');
-      const tokenResult = await this.runCapture(executable, ['tunnel', 'token', normalizedName], { timeoutMs: 30_000, silent: true });
-      const token = tokenResult.stdout.trim();
-      if (tokenResult.code !== 0 || token.length < 20) throw new Error('Tunnel은 생성됐지만 실행 토큰을 가져오지 못했습니다.');
-      return this.saveNamedTunnel({ publicBaseUrl: normalizedUrl, tunnelName: normalizedName, token });
+      const profileRoot = process.env.USERPROFILE || (
+        process.env.HOMEDRIVE && process.env.HOMEPATH
+          ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}`
+          : ''
+      );
+      const credentialsFile = profileRoot ? join(profileRoot, '.cloudflared', `${configuredTunnel.id}.json`) : '';
+      try { await stat(credentialsFile); } catch {
+        throw new Error('이 PC에서 Tunnel 자격 증명 파일을 찾지 못했습니다. 같은 PC에서 새 Tunnel을 만들거나 수동 토큰 등록을 사용하세요.');
+      }
+      const yamlPath = value => String(value).replaceAll('\\', '/');
+      const tunnelConfig = [
+        `tunnel: ${configuredTunnel.id}`,
+        `credentials-file: ${JSON.stringify(yamlPath(credentialsFile))}`,
+        'ingress:',
+        `  - hostname: ${hostname}`,
+        `    service: ${LOCAL_BASE_URL}`,
+        '  - service: http_status:404',
+        ''
+      ].join('\n');
+      await writeFile(this.paths.namedCloudflaredConfig, tunnelConfig, 'utf8');
+      await rm(this.paths.namedToken, { force: true });
+      await this.writeJson(this.paths.namedConfig, {
+        version: 2,
+        public_base_url: normalizedUrl,
+        tunnel_name: normalizedName,
+        tunnel_id: configuredTunnel.id,
+        management: 'local-config-v1',
+        credentials_file: credentialsFile,
+        cloudflared_config: this.paths.namedCloudflaredConfig,
+        updated_at: new Date().toISOString()
+      });
+      await this.updateSettings({ preferredStartMode: 'named', autoRestoreServer: true });
+      this.action(`고정 도메인을 기본 시작 주소로 설정했습니다: ${normalizedUrl}`, 'success');
+      this.emit('status-changed');
+      return { publicBaseUrl: normalizedUrl, tunnelName: normalizedName };
     });
   }
 
@@ -806,14 +946,21 @@ export class McpController extends EventEmitter {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 160, 500));
     try {
       const info = await stat(this.paths.audit);
-      const bytes = Math.min(info.size, 512 * 1024);
+      // Status polling from older builds can occupy several megabytes. Read a
+      // bounded history window, remove launcher telemetry, and only then take
+      // the requested number of real user/audit events.
+      const bytes = Math.min(info.size, 8 * 1024 * 1024);
       const handle = await open(this.paths.audit, 'r');
       try {
         const buffer = Buffer.alloc(bytes);
         await handle.read(buffer, 0, bytes, info.size - bytes);
         const lines = buffer.toString('utf8').split(/\r?\n/).filter(Boolean);
         if (info.size > bytes) lines.shift();
-        return lines.slice(-safeLimit).map(line => parseJson(line)).filter(Boolean).map(sanitizeActivity);
+        return lines
+          .map(line => parseJson(line))
+          .filter(entry => entry && !HIDDEN_TELEMETRY_EVENTS.has(entry.event))
+          .slice(-safeLimit)
+          .map(sanitizeActivity);
       } finally {
         await handle.close();
       }
@@ -852,7 +999,7 @@ export class McpController extends EventEmitter {
       this.auditRemainder = lines.pop() || '';
       for (const line of lines) {
         const parsed = parseJson(line);
-        if (parsed) this.emit('activity', sanitizeActivity(parsed));
+        if (parsed && !HIDDEN_TELEMETRY_EVENTS.has(parsed.event)) this.emit('activity', sanitizeActivity(parsed));
       }
     } finally {
       await handle.close();

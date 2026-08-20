@@ -52,10 +52,11 @@
     </aside>
 
     <main class="workspace">
-      <section class="topline" id="overview">
+      <section class="topline">
         <div>
-          <p class="eyebrow">DESKTOP OPERATIONS / <span id="currentModeLabel">STANDBY</span></p>
-          <h2>이 컴퓨터의 AI 제어를 한눈에.</h2>
+          <p class="eyebrow"><span id="pageEyebrow">DESKTOP OPERATIONS</span> / <span id="currentModeLabel">STANDBY</span></p>
+          <h2 id="pageTitle">이 컴퓨터의 AI 제어를 한눈에.</h2>
+          <p class="page-description" id="pageDescription">서버, 연결, 주소 유지 상태를 한 화면에서 확인합니다.</p>
         </div>
         <div class="top-actions">
           <button class="icon-button" id="copyToken" title="페어링 토큰 복사">TOKEN</button>
@@ -64,7 +65,7 @@
         </div>
       </section>
 
-      <section class="command-deck panel">
+      <section class="command-deck panel page-view active" data-page="overview">
         <div class="core-visual" aria-hidden="true">
           <div class="core-grid"></div>
           <div class="core-ring ring-outer"></div>
@@ -89,8 +90,9 @@
             <button id="inlineCopyLanUrl" aria-label="LAN IP URL 복사">복사</button>
           </div>
           <div class="command-buttons">
-            <button class="primary-button" id="startQuick"><span class="button-led"></span>임시 HTTPS 시작</button>
-            <button class="secondary-button" id="startNamed">고정 도메인 시작</button>
+            <button class="primary-button" id="startDefault"><span class="button-led"></span><span id="startDefaultLabel">기본 서버 시작</span></button>
+            <button class="secondary-button" id="restartServer">주소 유지 재시작</button>
+            <button class="ghost-button" id="startQuick">새 임시 HTTPS</button>
             <button class="ghost-button" id="startLan">LAN 전용 시작</button>
             <button class="danger-button" id="stopServer">서버 종료</button>
           </div>
@@ -103,7 +105,7 @@
         </div>
       </section>
 
-      <section class="content-grid live-grid" id="live-view">
+      <section class="content-grid live-grid page-view" data-page="live-view">
         <article class="panel preview-panel">
           <div class="panel-head">
             <div><p class="eyebrow">LIVE DESKTOP</p><h3>실행 중인 화면</h3></div>
@@ -149,13 +151,14 @@
         </article>
       </section>
 
-      <section class="panel activity-panel" id="activity">
+      <section class="panel activity-panel page-view" data-page="activity">
         <div class="panel-head">
           <div><p class="eyebrow">REAL-TIME AUDIT STREAM</p><h3>AI 실행 로그</h3></div>
           <div class="filter-row">
             <button class="filter active" data-filter="all">전체</button>
             <button class="filter" data-filter="input">입력</button>
             <button class="filter" data-filter="observe">관찰</button>
+            <button class="filter" data-filter="file">파일</button>
             <button class="filter" data-filter="system">시스템</button>
             <button class="filter" data-filter="error">오류</button>
           </div>
@@ -166,7 +169,7 @@
         </div>
       </section>
 
-      <section class="content-grid" id="connections">
+      <section class="content-grid page-view" data-page="connections">
         <article class="panel connections-panel">
           <div class="panel-head">
             <div><p class="eyebrow">AUTHORIZED CONNECTORS</p><h3>연동된 AI</h3></div>
@@ -182,9 +185,30 @@
           <div class="token-lifetime"><span>REFRESH TOKEN</span><strong id="refreshTtl">—</strong><small>재인증 없이 갱신 가능</small></div>
           <button class="secondary-button full" id="copyPairingToken">페어링 토큰 복사</button>
         </article>
+        <article class="panel reconnect-panel" id="reconnectPanel" data-state="checking">
+          <div class="panel-head">
+            <div><p class="eyebrow">CHATGPT RECOVERY</p><h3 id="reconnectGuideTitle">대화별 도구 상태 복구</h3></div>
+            <span class="count-badge" id="reconnectGuideState">CHECKING</span>
+          </div>
+          <div class="reconnect-layout">
+            <div class="reconnect-copy">
+              <p id="reconnectGuideText">서버 인증과 ChatGPT 대화의 도구 활성 상태를 구분해 표시합니다.</p>
+              <small>ChatGPT가 “도구 비활성화”라고 답하고 실행 로그에 새 세션이 없다면 요청은 이 PC에 도달하기 전에 대화에서 차단된 것입니다.</small>
+            </div>
+            <ol class="reconnect-steps">
+              <li><span>01</span><b>플러그인</b><small>Remote MCP Control 열기</small></li>
+              <li><span>02</span><b>관리 → 새로 고침</b><small>도구 목록 다시 동기화</small></li>
+              <li><span>03</span><b>채팅에서 사용</b><small>현재/새 대화에 도구 활성화</small></li>
+            </ol>
+            <div class="reconnect-actions">
+              <button class="primary-button" id="openChatGptPlugins">ChatGPT 플러그인 열기</button>
+              <button class="secondary-button" id="copyReconnectUrl">MCP URL 다시 복사</button>
+            </div>
+          </div>
+        </article>
       </section>
 
-      <section class="panel domain-panel" id="fixed-domain">
+      <section class="panel domain-panel page-view" data-page="fixed-domain">
         <div class="panel-head">
           <div><p class="eyebrow">PERSISTENT ENDPOINT</p><h3>고정 MCP 도메인</h3></div>
           <span class="domain-state" id="domainState">NOT CONFIGURED</span>
@@ -196,10 +220,12 @@
               <div><span>02</span><b>Named Tunnel</b><small>암호화 연결</small></div><i></i>
               <div><span>03</span><b>고정 URL</b><small id="savedDomainText">mcp.example.com</small></div>
             </div>
-            <p>Cloudflare 계정에 활성화된 본인 도메인이 필요합니다. 앱이 Tunnel 생성, DNS 연결, 실행 토큰 암호화를 처리하며 기존 DNS 레코드는 덮어쓰지 않습니다.</p>
+            <p>Cloudflare 계정에 활성화된 본인 도메인이 필요합니다. 앱이 로컬 관리형 Tunnel, DNS, 127.0.0.1:8787 ingress를 구성하며 기존 DNS 레코드는 덮어쓰지 않습니다.</p>
             <label class="switch-row network-switch"><div><b>하이브리드 IP 모드</b><p>공개 HTTPS 연결은 유지하면서 같은 LAN에서는 이 PC의 IPv4 주소로도 MCP를 수신합니다. Windows 방화벽은 자동 변경하지 않습니다.</p></div><input id="lanDirectToggle" type="checkbox"><span class="switch"></span></label>
+            <label class="switch-row network-switch"><div><b>앱 실행 시 고정 주소 자동 복구</b><p>Named Tunnel이 설정되면 기본 시작 모드로 사용하고, 실행기 재실행 시 같은 URL로 서버와 터널을 복구합니다.</p></div><input id="autoRestoreToggle" type="checkbox"><span class="switch"></span></label>
             <div class="cloudflare-status" id="cloudflareStatus"><span></span><b>Cloudflare 상태 확인 전</b></div>
             <div class="domain-action-row">
+              <button class="primary-button" id="startNamed" type="button">고정 도메인 시작</button>
               <button class="secondary-button" id="checkCloudflare">계정 상태 확인</button>
               <button class="ghost-button" id="loginCloudflare">브라우저 로그인</button>
             </div>
@@ -211,6 +237,7 @@
             <button class="primary-button full" type="submit">Tunnel + DNS 자동 구성</button>
             <details>
               <summary>이미 만든 Tunnel을 수동 등록</summary>
+              <p class="manual-note">원격 관리형 Tunnel은 Cloudflare 대시보드에서 이 호스트의 Published application 서비스가 <code>http://127.0.0.1:8787</code>로 설정되어 있어야 합니다.</p>
               <label>실행 토큰<textarea id="manualTunnelToken" rows="3" spellcheck="false" placeholder="Cloudflare Tunnel token"></textarea></label>
               <button class="ghost-button full" type="button" id="saveManualTunnel">URL과 토큰 저장</button>
             </details>
@@ -218,7 +245,7 @@
         </div>
       </section>
 
-      <section class="content-grid permissions-grid" id="permissions">
+      <section class="content-grid permissions-grid page-view" data-page="permissions">
         <article class="panel profile-panel">
           <div class="panel-head"><div><p class="eyebrow">LOCAL ENFORCEMENT</p><h3>컴퓨터 제어 권한</h3></div><span class="profile-badge" id="profileBadge">AGENT</span></div>
           <div class="profile-options">

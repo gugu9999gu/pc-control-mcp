@@ -6,12 +6,12 @@ This project exposes an allowlisted Windows desktop-control MCP server over Stre
 
 ## Quick start
 
-Download the portable `Remote-MCP-Control-0.2.4-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
+Download the portable `Remote-MCP-Control-0.2.5-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
 
 The portable build is not Authenticode-signed. Windows SmartScreen can therefore show an unknown-publisher warning. Download it only from this repository's release, compare its SHA-256 value with `SHA256SUMS.txt` on the same release, and do not run it if the values differ. A future release needs a trusted Windows code-signing certificate to remove this warning.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.4-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.5-x64.exe
 ```
 
 ```text
@@ -21,12 +21,14 @@ MCP-Remote-Control-Launcher.cmd
 With no command-line arguments this opens the Electron control center. On the first run it installs the locked Electron dependencies, then provides:
 
 - animated server/tunnel health and PID telemetry;
+- separate Overview, Live desktop, Activity, AI connections, Fixed domain, and Permissions pages;
 - a live primary-monitor preview;
-- real-time per-AI tool, OAuth, mouse, keyboard, process, and background-job audit activity;
+- real-time per-AI tool, OAuth, mouse, keyboard, process, background-job, and workspace-file audit activity;
 - a click-through transparent desktop HUD showing remote mouse and keyboard activity without recording typed text;
 - a center-lower operation brief showing the AI's user-visible task summary, current target, progress, and recent real tool execution log;
 - connector permissions, active sessions, revocation, pairing-token copy, and local safe/agent/full policy controls;
 - Quick Tunnel, private-LAN, and stable Cloudflare Named Tunnel management.
+- endpoint-preserving MCP-core restart plus Named Tunnel default start and automatic recovery;
 - a hybrid IP mode that keeps public HTTPS connected while also listening on this PC's LAN IPv4 address.
 
 The dashboard and desktop HUD distinguish the external-AI lifecycle explicitly:
@@ -34,7 +36,7 @@ The dashboard and desktop HUD distinguish the external-AI lifecycle explicitly:
 - **Not connected**: the server is online but no external OAuth connector or live MCP session is detected;
 - **Pairing**: a web GPT/plugin has registered and is waiting for consent, the pairing token, or OAuth token exchange;
 - **Connected / idle**: OAuth authorization and refresh credentials are valid and the connector is waiting for its next tool call;
-- **Live connection**: an MCP transport session is currently communicating with this PC.
+- **Live connection**: real MCP transport activity was detected in the last 90 seconds.
 
 An abandoned pairing indication expires after ten minutes and returns to **Not connected**. The launcher's own local OAuth verification clients are excluded from external connection status and counts.
 
@@ -78,7 +80,9 @@ powershell.exe -ExecutionPolicy Bypass -File .\scripts\launcher.ps1 -WatchActivi
 
 The first version exposed a custom `/auth/exchange` endpoint using a bootstrap secret and `client_credentials`. ChatGPT connector authentication uses OAuth 2.1 authorization code flow with PKCE; it does not accept client credentials, service accounts, custom API keys, or a bootstrap secret as a connector credential. The server now publishes the protected-resource metadata, authorization-server metadata, dynamic registration endpoint, authorization page, PKCE token exchange, refresh-token rotation, CORS headers for trusted OpenAI browser origins, and per-tool OAuth metadata required by the connector.
 
-OAuth access tokens now last seven days by default and refresh tokens 90 days. A connector normally refreshes silently, so it should not ask for the pairing token on each tool call. A changed Quick Tunnel URL is a new OAuth resource, however, and requires a new authorization; use a stable named tunnel to avoid that.
+OAuth access tokens now last 30 days by default and refresh tokens 365 days. A refreshed access token remains authorized for an existing MCP session when it belongs to the same OAuth client. A changed Quick Tunnel URL is a new OAuth resource, however, and requires a new authorization; use a stable named tunnel to avoid that.
+
+If ChatGPT reports **tool disabled** while the launcher's AI Connections page shows **Authorized · 0 active sessions**, the server and OAuth grant are still available. The request was blocked by the per-conversation plugin state before it reached this PC. Open **AI Connections → Open ChatGPT plugins**, choose `Remote MCP Control`, then use **Plugin actions → Manage → Refresh**. Re-select the plugin in the existing conversation or choose **Try in chat** to open a plugin-enabled conversation. This refresh reuses the existing OAuth grant and does not require the pairing token again. A new `OpenAI (chatgpt.com)` MCP session in the launcher confirms that ChatGPT reached the server. The remote server cannot force ChatGPT to keep a tool enabled in every conversation, so the UI reports authorization readiness separately from recent live sessions.
 
 ## Connector permissions and activity
 
@@ -104,7 +108,7 @@ Viewing is required to establish a useful connector. The local control profile r
 - Agent jobs: `agent_start`, `background_job_list`, `background_job_output`, and `background_job_stop` for non-interactive Codex or Claude Code tasks.
 - Direct allowlisted CLI jobs: `cli_start`, available only after the local full profile is enabled.
 
-All tool calls are recorded in `data\audit.ndjson`. Set `-DisableInput` on the launcher or server start script to disable desktop-input tools.
+All tool calls are recorded in `data\audit.ndjson`. Internal launcher polling is excluded. While `agent_start` or `cli_start` owns a workspace, created, modified, and deleted paths are also recorded without file contents; `.git`, `node_modules`, build outputs, and caches are ignored to control noise. Set `-DisableInput` on the launcher or server start script to disable desktop-input tools.
 
 ## Multi-agent coordination
 
@@ -178,7 +182,7 @@ If the authorization page accepts the token but ChatGPT does not finish linking,
 
 The Electron **Start temporary HTTPS** button and legacy launcher option 1 use Cloudflare Quick Tunnel. The generated hostname is temporary and changes when the tunnel restarts.
 
-For a stable URL, open the Electron **Fixed domain** section. It checks cloudflared and login state, can open the Cloudflare browser login, create a uniquely named tunnel, create a DNS route for a Cloudflare-managed hostname, obtain the run token without displaying it, and encrypt it with the current Windows user's secure storage. Use a simple unique name such as `remote-mcp-admin-pc` (English letters, numbers, and hyphens). The hostname must be under a domain active in the same Cloudflare account, such as `https://mcp.example.com`; existing DNS records are never overwritten. Existing tunnel URLs and tokens can also be registered manually. The resulting `https://your-hostname/mcp` URL remains unchanged across app restarts, preserving the connector's OAuth resource identifier. Legacy launcher options 19 and 20 remain available and use Windows DPAPI storage.
+For a stable URL, open the Electron **Fixed domain** page. It checks cloudflared and login state, can open the Cloudflare browser login, create a uniquely named locally managed tunnel, add the DNS route, and write a local ingress configuration that maps the hostname to `127.0.0.1:8787`. Existing remote-managed tunnel URLs and tokens can still be registered manually; those tokens are encrypted with the current Windows user's secure storage. Use a simple unique name such as `remote-mcp-admin-pc` (English letters, numbers, and hyphens). The hostname must be under a domain active in the same Cloudflare account, such as `https://mcp.example.com`; existing DNS records are never overwritten. Once configured, Named Tunnel becomes the default start mode and is automatically recovered when the launcher starts. **Preserve-address restart** restarts only the MCP core while leaving the tunnel URL and OAuth resource unchanged. The resulting `https://your-hostname/mcp` URL remains unchanged across app restarts.
 
 Option 18 provides the current private-LAN address as `http://LAN-IP:8787/mcp`; it remains stable while DHCP keeps the same IP and is suitable for trusted devices on that LAN after running `scripts\install-firewall.ps1` as Administrator. It is not HTTPS and is not reachable by ChatGPT's cloud connector. Use a named HTTPS tunnel for remote ChatGPT access.
 
