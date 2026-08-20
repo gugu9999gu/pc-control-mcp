@@ -19,6 +19,7 @@ const sleep = milliseconds => new Promise(resolvePromise => setTimeout(resolvePr
 const LOCAL_BASE_URL = 'http://127.0.0.1:8787';
 const VALID_PROFILES = new Set(['safe', 'agent', 'full']);
 const VALID_START_MODES = new Set(['quick', 'named', 'lan']);
+const VALID_CONNECTION_STATES = new Set(['offline', 'disconnected', 'pairing', 'authorized', 'connected']);
 
 function parseJson(text, fallback = null) {
   try { return JSON.parse(String(text).replace(/^\uFEFF/, '')); } catch { return fallback; }
@@ -66,6 +67,45 @@ function sanitizeActivity(entry) {
   // Typed text is intentionally absent from the server audit log. Keep this
   // sanitizer strict so future fields cannot accidentally expose secrets.
   return safe;
+}
+
+function normalizeConnectionState(localHealthy, connectorStatus) {
+  if (!localHealthy) {
+    return {
+      status: 'offline', detected: false, client_id: null, client_name: null,
+      pairing_phase: null, active_session_count: 0, authorized_connector_count: 0,
+      pairing_attempt_count: 0
+    };
+  }
+  const supplied = connectorStatus?.connection_state;
+  if (supplied && VALID_CONNECTION_STATES.has(supplied.status)) {
+    return {
+      ...supplied,
+      detected: supplied.status !== 'offline' && supplied.status !== 'disconnected',
+      active_session_count: Number(supplied.active_session_count) || 0,
+      authorized_connector_count: Number(supplied.authorized_connector_count) || 0,
+      pairing_attempt_count: Number(supplied.pairing_attempt_count) || 0
+    };
+  }
+
+  // Compatibility fallback while a previously packaged server is being
+  // replaced by this launcher build.
+  const sessions = connectorStatus?.active_mcp_sessions || [];
+  const connectors = (connectorStatus?.connectors || []).filter(item =>
+    String(item.client_name || '').toLowerCase() !== 'local oauth verification' && item.connected === true
+  );
+  const subject = sessions.at(-1) || connectors[0] || null;
+  const status = sessions.length > 0 ? 'connected' : connectors.length > 0 ? 'authorized' : 'disconnected';
+  return {
+    status,
+    detected: status !== 'disconnected',
+    client_id: subject?.client_id || null,
+    client_name: subject?.client_name || null,
+    pairing_phase: null,
+    active_session_count: sessions.length,
+    authorized_connector_count: connectors.length,
+    pairing_attempt_count: 0
+  };
 }
 
 export class McpController extends EventEmitter {
@@ -582,6 +622,7 @@ export class McpController extends EventEmitter {
       localHealthy = response.ok;
     } catch { /* Offline. */ }
     const connectorStatus = localHealthy ? await this.getConnectorStatus() : null;
+    const connectionState = normalizeConnectionState(localHealthy, connectorStatus);
     const mode = lastPublicBaseUrl.includes('trycloudflare.com')
       ? 'quick'
       : lastPublicBaseUrl && named?.publicBaseUrl === lastPublicBaseUrl
@@ -616,8 +657,10 @@ export class McpController extends EventEmitter {
       policy,
       connectors: connectorStatus?.connectors || [],
       activeSessions: connectorStatus?.active_mcp_sessions || [],
+      connectionState,
       oauthAccessTokenTtlSeconds: connectorStatus?.oauth_access_token_ttl_seconds || null,
       oauthRefreshTokenTtlSeconds: connectorStatus?.oauth_refresh_token_ttl_seconds || null,
+      pairingStateTtlSeconds: connectorStatus?.pairing_state_ttl_seconds || null,
       namedTunnel: named ? { publicBaseUrl: named.publicBaseUrl, tunnelName: named.tunnelName } : null,
       settings
     };
@@ -817,4 +860,4 @@ export class McpController extends EventEmitter {
   }
 }
 
-export const validators = { normalizeHttpsOrigin, normalizeTunnelName, sanitizeActivity };
+export const validators = { normalizeHttpsOrigin, normalizeTunnelName, sanitizeActivity, normalizeConnectionState };

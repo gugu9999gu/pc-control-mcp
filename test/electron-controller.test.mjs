@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { McpController, validators } from '../electron/lib/controller.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -77,6 +78,20 @@ test('HUD activity lifecycle metadata is retained without leaking secret fields'
   assert.equal('access_token' in safe, false);
 });
 
+test('controller always returns an explicit offline or connection state', () => {
+  assert.equal(validators.normalizeConnectionState(false, null).status, 'offline');
+  assert.equal(validators.normalizeConnectionState(true, { connectors: [], active_mcp_sessions: [] }).status, 'disconnected');
+  const pairing = validators.normalizeConnectionState(true, {
+    connection_state: {
+      status: 'pairing', client_name: 'ChatGPT', pairing_phase: 'awaiting_authorization',
+      active_session_count: 0, authorized_connector_count: 0, pairing_attempt_count: 1
+    }
+  });
+  assert.equal(pairing.status, 'pairing');
+  assert.equal(pairing.detected, true);
+  assert.equal(pairing.client_name, 'ChatGPT');
+});
+
 test('audit watcher emits single-line lifecycle appends without dropping the first event', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'remote-mcp-audit-watch-'));
   const controller = new McpController({
@@ -137,7 +152,97 @@ test('server boots with an Electron-managed external data directory', async () =
     assert.equal(health?.ok, true, stderr);
     assert.match(stdout, new RegExp(`Listening on http://127\\.0\\.0\\.1:${port}`));
     assert.match(await readFile(join(dataDir, 'bootstrap-token.txt'), 'utf8'), /^[A-Za-z0-9_-]{40,}/);
-    assert.match(await readFile(join(dataDir, 'local-admin-token.txt'), 'utf8'), /^[A-Za-z0-9_-]{40,}/);
+    const localAdmin = (await readFile(join(dataDir, 'local-admin-token.txt'), 'utf8')).trim();
+    assert.match(localAdmin, /^[A-Za-z0-9_-]{40,}/);
+
+    const adminHeaders = { 'X-Mcp-Local-Admin': localAdmin };
+    const initialStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(initialStatus.connection_state.status, 'disconnected');
+
+    const registrationResponse = await fetch(`http://127.0.0.1:${port}/oauth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_name: 'ChatGPT pairing integration test', redirect_uris: ['http://127.0.0.1/callback'] })
+    });
+    assert.equal(registrationResponse.status, 201);
+    const registration = await registrationResponse.json();
+    const registeredStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(registeredStatus.connection_state.status, 'pairing');
+    assert.equal(registeredStatus.connection_state.pairing_phase, 'registered');
+
+    const verifier = 'A'.repeat(64);
+    const challenge = createHash('sha256').update(verifier).digest('base64url');
+    const authorizationParams = {
+      client_id: registration.client_id,
+      redirect_uri: 'http://127.0.0.1/callback',
+      response_type: 'code',
+      scope: 'desktop:read desktop:control',
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+      resource: `http://127.0.0.1:${port}`
+    };
+    const authorization = new URL(`http://127.0.0.1:${port}/oauth/authorize`);
+    authorization.search = new URLSearchParams(authorizationParams);
+    assert.equal((await fetch(authorization)).status, 200);
+    const awaitingStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(awaitingStatus.connection_state.status, 'pairing');
+    assert.equal(awaitingStatus.connection_state.pairing_phase, 'awaiting_authorization');
+
+    const bootstrap = (await readFile(join(dataDir, 'bootstrap-token.txt'), 'utf8')).trim();
+    const consentBody = new URLSearchParams({ ...authorizationParams, consent_form: '1', bootstrap_token: bootstrap });
+    consentBody.append('permission', 'observe');
+    const consent = await fetch(`http://127.0.0.1:${port}/oauth/authorize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: consentBody,
+      redirect: 'manual'
+    });
+    assert.equal(consent.status, 302);
+    const code = new URL(consent.headers.get('location')).searchParams.get('code');
+    assert.ok(code);
+    const approvedStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(approvedStatus.connection_state.status, 'pairing');
+    assert.equal(approvedStatus.connection_state.pairing_phase, 'authorization_approved');
+
+    const tokenResponse = await fetch(`http://127.0.0.1:${port}/oauth/token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code', client_id: registration.client_id,
+        redirect_uri: 'http://127.0.0.1/callback', code, code_verifier: verifier,
+        resource: `http://127.0.0.1:${port}`
+      })
+    });
+    assert.equal(tokenResponse.status, 200);
+    const token = await tokenResponse.json();
+    const authorizedStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(authorizedStatus.connection_state.status, 'authorized');
+
+    const mcpHeaders = {
+      Authorization: `Bearer ${token.access_token}`,
+      Accept: 'application/json, text/event-stream',
+      'Content-Type': 'application/json',
+      'Mcp-Protocol-Version': '2025-11-25'
+    };
+    const initialize = await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'POST', headers: mcpHeaders,
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1, method: 'initialize',
+        params: { protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'pairing-state-test', version: '1.0.0' } }
+      })
+    });
+    assert.equal(initialize.status, 200);
+    const sessionId = initialize.headers.get('mcp-session-id');
+    assert.ok(sessionId);
+    const connectedStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(connectedStatus.connection_state.status, 'connected');
+    assert.equal(connectedStatus.connection_state.active_session_count, 1);
+
+    await fetch(`http://127.0.0.1:${port}/mcp`, {
+      method: 'DELETE', headers: { ...mcpHeaders, 'Mcp-Session-Id': sessionId }
+    });
+    const idleStatus = await fetch(`http://127.0.0.1:${port}/admin/connectors`, { headers: adminHeaders }).then(response => response.json());
+    assert.equal(idleStatus.connection_state.status, 'authorized');
   } finally {
     child.kill();
     await new Promise(resolvePromise => child.once('close', resolvePromise));

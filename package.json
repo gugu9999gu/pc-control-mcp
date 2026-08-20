@@ -1,6 +1,6 @@
 {
   "name": "codex-remote-mcp-control",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "description": "Authenticated Streamable HTTP MCP server for safe Windows desktop control.",

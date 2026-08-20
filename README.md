@@ -6,12 +6,12 @@ This project exposes an allowlisted Windows desktop-control MCP server over Stre
 
 ## Quick start
 
-Download the portable `Remote-MCP-Control-0.2.3-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
+Download the portable `Remote-MCP-Control-0.2.4-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
 
 The portable build is not Authenticode-signed. Windows SmartScreen can therefore show an unknown-publisher warning. Download it only from this repository's release, compare its SHA-256 value with `SHA256SUMS.txt` on the same release, and do not run it if the values differ. A future release needs a trusted Windows code-signing certificate to remove this warning.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.3-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.4-x64.exe
 ```
 
 ```text
@@ -28,6 +28,15 @@ With no command-line arguments this opens the Electron control center. On the fi
 - connector permissions, active sessions, revocation, pairing-token copy, and local safe/agent/full policy controls;
 - Quick Tunnel, private-LAN, and stable Cloudflare Named Tunnel management.
 - a hybrid IP mode that keeps public HTTPS connected while also listening on this PC's LAN IPv4 address.
+
+The dashboard and desktop HUD distinguish the external-AI lifecycle explicitly:
+
+- **Not connected**: the server is online but no external OAuth connector or live MCP session is detected;
+- **Pairing**: a web GPT/plugin has registered and is waiting for consent, the pairing token, or OAuth token exchange;
+- **Connected / idle**: OAuth authorization and refresh credentials are valid and the connector is waiting for its next tool call;
+- **Live connection**: an MCP transport session is currently communicating with this PC.
+
+An abandoned pairing indication expires after ten minutes and returns to **Not connected**. The launcher's own local OAuth verification clients are excluded from external connection status and counts.
 
 Choose **Start temporary HTTPS** for a generated Quick Tunnel URL, or configure a stable domain in the **Fixed domain** section and choose **Start fixed domain**. The app creates the server and tunnel as background processes; quitting the app from its tray menu can either keep them running or stop them.
 

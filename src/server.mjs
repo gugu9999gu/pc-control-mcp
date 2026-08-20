@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { isInitializeRequest, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { AsyncFifoMutex, DesktopControlCoordinator, findWorkspaceConflict } from './control-coordinator.mjs';
+import { deriveConnectionState } from './connection-state.mjs';
 
 const execFile = promisify(execFileCallback);
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,6 +45,7 @@ const ACCESS_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_ACCESS_TOKEN_TT
 const OAUTH_ACCESS_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_ACCESS_TOKEN_TTL_SECONDS || `${7 * 24 * 60 * 60}`, 10);
 const OAUTH_REFRESH_TOKEN_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_REFRESH_TOKEN_TTL_SECONDS || `${90 * 24 * 60 * 60}`, 10);
 const OAUTH_CODE_TTL_SECONDS = Number.parseInt(process.env.MCP_OAUTH_CODE_TTL_SECONDS || '300', 10);
+const PAIRING_STATE_TTL_SECONDS = Math.max(60, Number.parseInt(process.env.MCP_PAIRING_STATE_TTL_SECONDS || '600', 10) || 600);
 const OAUTH_SCOPES = ['desktop:read', 'desktop:control'];
 const ALLOWED_ORIGINS = (process.env.MCP_ALLOWED_ORIGINS || '')
   .split(',')
@@ -369,15 +371,23 @@ function connectorStatusSummary(options = {}) {
     .filter(([, session]) => !options.clientId || session.auth.clientId === options.clientId)
     .map(([sessionId, session]) => ({
     session_id: sessionId,
+    client_id: session.auth.clientId || null,
     client_name: session.auth.clientName,
     token_id: session.auth.tokenId,
     connected_at: session.connectedAt || null,
     last_activity_at: session.lastActivityAt || null,
     client_info: session.clientInfo || null
     }));
+  const connectionState = deriveConnectionState({
+    connectors,
+    activeSessions,
+    pairingTtlSeconds: PAIRING_STATE_TTL_SECONDS
+  });
   return {
     oauth_access_token_ttl_seconds: OAUTH_ACCESS_TOKEN_TTL_SECONDS,
     oauth_refresh_token_ttl_seconds: OAUTH_REFRESH_TOKEN_TTL_SECONDS,
+    pairing_state_ttl_seconds: PAIRING_STATE_TTL_SECONDS,
+    connection_state: connectionState,
     connectors,
     active_mcp_sessions: activeSessions,
     desktop_control: desktopControlCoordinator.status(options.ownerId || null)
@@ -688,6 +698,37 @@ function findOauthClient(clientId) {
   return authState.oauth_clients.find(client => client.client_id === clientId);
 }
 
+function ensureOauthClientForAuthorization(validation) {
+  const existing = findOauthClient(validation.clientId);
+  if (existing) return existing;
+  const issuedAt = nowSeconds();
+  const client = {
+    client_id: validation.clientId,
+    client_name: getClientName(validation.clientId),
+    redirect_uris: [validation.redirectUri],
+    scope: validation.scope,
+    permissions: ALL_PERMISSION_IDS,
+    token_endpoint_auth_method: 'none',
+    issued_at: issuedAt
+  };
+  authState.oauth_clients.push(client);
+  return client;
+}
+
+function updatePairingPhase(client, phase) {
+  if (!client) return;
+  const updatedAt = nowSeconds();
+  if (!client.pairing_started_at || phase === 'registered' || ['authorized', 'revoked'].includes(client.pairing_status)) {
+    client.pairing_started_at = updatedAt;
+  }
+  client.pairing_status = phase;
+  client.pairing_updated_at = updatedAt;
+  client.pairing_expires_at = ['authorized', 'revoked'].includes(phase)
+    ? null
+    : updatedAt + PAIRING_STATE_TTL_SECONDS;
+  if (phase === 'authorized') client.authorized_at = updatedAt;
+}
+
 async function closeTrackedSessions(predicate) {
   const sessionsToClose = [...transports.entries()]
     .filter(([, session]) => predicate(session))
@@ -710,7 +751,8 @@ async function revokeClientAuthorization(clientId, reason, context = {}) {
       changed = true;
     }
   }
-  if (changed) await persistAuth();
+  updatePairingPhase(findOauthClient(clientId), 'revoked');
+  await persistAuth();
   await closeTrackedSessions(session => session.auth.clientId === clientId);
   await audit({ event: 'connector_authorization_revoked', client_id: clientId, reason, ...context });
   return changed;
@@ -732,7 +774,12 @@ function connectorSummary(client) {
     active_access_tokens: activeAccessTokens.length,
     active_refresh_tokens: activeRefreshTokens.length,
     permissions: permissionsFromRecord(newest || client),
-    last_used_at: lastUsedSeconds ? new Date(lastUsedSeconds * 1000).toISOString() : null
+    last_used_at: lastUsedSeconds ? new Date(lastUsedSeconds * 1000).toISOString() : null,
+    pairing_status: client.pairing_status || null,
+    pairing_started_at: client.pairing_started_at ? new Date(client.pairing_started_at * 1000).toISOString() : null,
+    pairing_updated_at: client.pairing_updated_at ? new Date(client.pairing_updated_at * 1000).toISOString() : null,
+    pairing_expires_at: client.pairing_expires_at ? new Date(client.pairing_expires_at * 1000).toISOString() : null,
+    authorized_at: client.authorized_at ? new Date(client.authorized_at * 1000).toISOString() : null
   };
 }
 
@@ -831,23 +878,42 @@ async function handleOAuthAuthorize(req, res) {
     return true;
   }
 
+  const registeredClient = ensureOauthClientForAuthorization(validation);
+
   if (req.method === 'GET') {
+    const phaseChanged = registeredClient.pairing_status !== 'awaiting_authorization';
+    updatePairingPhase(registeredClient, 'awaiting_authorization');
+    await persistAuth();
+    if (phaseChanged) {
+      await audit({
+        event: 'oauth_authorization_started',
+        ip: getClientIp(req),
+        client_id: validation.clientId,
+        client_name: registeredClient.client_name,
+        redirect_uri: validation.redirectUri,
+        resource: validation.resource
+      });
+    }
     sendHtml(res, 200, authorizationForm(params));
     return true;
   }
 
   if (!verifyBootstrap(params.bootstrap_token)) {
+    updatePairingPhase(registeredClient, 'authorization_failed');
+    await persistAuth();
     await audit({ event: 'oauth_authorization_denied', ip: getClientIp(req), client_id: validation.clientId, redirect_uri: validation.redirectUri, resource: validation.resource, reason: 'invalid_pairing_token' });
     sendHtml(res, 401, authorizationForm(params, 'Pairing token is invalid.'));
     return true;
   }
   const permissions = requestedConnectorPermissions(params);
   if (!permissions.includes('observe')) {
+    updatePairingPhase(registeredClient, 'permission_selection_required');
+    await persistAuth();
     sendHtml(res, 400, authorizationForm(params, 'Desktop and system viewing permission is required to connect.'));
     return true;
   }
-  const registeredClient = findOauthClient(validation.clientId);
-  if (registeredClient) registeredClient.permissions = permissions;
+  registeredClient.permissions = permissions;
+  updatePairingPhase(registeredClient, 'authorization_approved');
 
   const code = `mcp_code_${randomBytes(32).toString('base64url')}`;
   authState.authorization_codes.push({
@@ -896,7 +962,11 @@ async function handleOAuthRegistration(req, res) {
     scope: OAUTH_SCOPES.join(' '),
     permissions: ALL_PERMISSION_IDS,
     token_endpoint_auth_method: 'none',
-    issued_at: issuedAt
+    issued_at: issuedAt,
+    pairing_status: 'registered',
+    pairing_started_at: issuedAt,
+    pairing_updated_at: issuedAt,
+    pairing_expires_at: issuedAt + PAIRING_STATE_TTL_SECONDS
   });
   await persistAuth();
   await audit({ event: 'oauth_client_registered', ip: getClientIp(req), client_id: clientId, client_name: clientName });
@@ -961,6 +1031,7 @@ async function handleOAuthToken(req, res) {
       permissions: record.permissions
     });
     const refreshToken = issueRefreshToken(record.client_id, record.resource, record.scope, record.permissions);
+    updatePairingPhase(findOauthClient(record.client_id), 'authorized');
     await persistAuth();
     await audit({ event: 'oauth_token_issued', ip: getClientIp(req), client_id: record.client_id, token_id: issued.tokenId, scope: record.scope, permissions: permissionsFromRecord(record) });
     sendJson(res, 200, {
@@ -996,6 +1067,7 @@ async function handleOAuthToken(req, res) {
       permissions: refresh.permissions
     });
     const rotatedRefreshToken = issueRefreshToken(refresh.client_id, refresh.resource, refresh.scope, refresh.permissions);
+    updatePairingPhase(findOauthClient(refresh.client_id), 'authorized');
     await persistAuth();
     await audit({ event: 'oauth_token_refreshed', ip: getClientIp(req), client_id: refresh.client_id, token_id: issued.tokenId, permissions: permissionsFromRecord(refresh) });
     sendJson(res, 200, {

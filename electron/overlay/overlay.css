@@ -72,6 +72,13 @@ body[data-phase="error"] .environment-frame { --cyan: var(--red); }
   backdrop-filter: blur(11px); transform: translateY(-10px); transition: opacity .3s, transform .3s, border-color .25s;
 }
 .server-hud.online { opacity: .9; transform: none; }
+.server-hud.connection-disconnected { border-color: rgba(118, 139, 136, .3); }
+.server-hud.connection-disconnected .hud-core i { border-color: #617b77; border-right-color: transparent; animation-duration: 7s; }
+.server-hud.connection-disconnected .hud-core span { background: #617b77; box-shadow: none; animation: none; }
+.server-hud.connection-pairing { border-color: rgba(150,152,255,.5); box-shadow: 0 10px 35px rgba(0,0,0,.25), 0 0 25px rgba(150,152,255,.1); }
+.server-hud.connection-pairing .hud-core i { border-color: var(--violet); border-right-color: transparent; animation-duration: 1.2s; }
+.server-hud.connection-pairing .hud-core span { background: var(--violet); box-shadow: 0 0 12px var(--violet); }
+.server-hud.connection-connected { border-color: rgba(69,240,204,.58); }
 .server-hud.busy { border-color: rgba(69,240,204,.58); box-shadow: 0 10px 35px rgba(0,0,0,.25), 0 0 25px rgba(69,240,204,.09); }
 .server-copy { min-width: 0; flex: 1; }
 .server-copy small, .server-copy strong, .server-copy p { display: block; margin: 0; }

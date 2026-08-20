@@ -6,12 +6,12 @@ Windows PC를 OAuth로 보호된 MCP 서버로 연결해 AI가 화면을 확인�
 
 ## 빠른 시작
 
-GitHub Releases에서 `Remote-MCP-Control-0.2.3-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
+GitHub Releases에서 `Remote-MCP-Control-0.2.4-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
 
 현재 포터블 빌드는 Authenticode 상용 코드서명이 없어 Windows SmartScreen에 알 수 없는 게시자 경고가 나타날 수 있습니다. 반드시 이 저장소의 Releases에서만 내려받고, 같은 릴리스의 `SHA256SUMS.txt`와 파일의 SHA-256 값을 비교하십시오. 값이 다르면 실행하지 마십시오. 이 경고를 없애려면 향후 신뢰할 수 있는 Windows 코드서명 인증서가 필요합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.3-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.4-x64.exe
 ```
 
 ```text
@@ -29,6 +29,15 @@ MCP-Remote-Control-Launcher.cmd
 - 임시 HTTPS Quick Tunnel, 사설 LAN, 고정 Cloudflare Named Tunnel
 - 공개 HTTPS 연결을 유지하면서 이 PC의 LAN IPv4 주소도 함께 여는 하이브리드 IP 모드
 - `safe`, `agent`, `full` 로컬 제어 프로필
+
+대시보드와 바탕화면 HUD는 외부 AI 연결을 다음처럼 구분해 표시합니다.
+
+- **연결 안 됨**: 서버는 온라인이지만 외부 OAuth 커넥터나 활성 세션이 감지되지 않음
+- **페어링 중**: 웹 GPT/플러그인이 등록되어 승인 화면, 페어링 토큰 입력 또는 토큰 교환을 진행 중
+- **연결됨**: OAuth 인증과 갱신 토큰이 유효하며 다음 도구 호출을 기다리는 중
+- **사용 중**: 실제 MCP 세션이 열려 이 PC와 통신 중
+
+중단된 페어링 표시는 기본 10분 뒤 자동 만료되어 **연결 안 됨**으로 돌아갑니다. 실행기 자체의 로컬 OAuth 검증은 외부 AI 연결 수와 상태에 포함되지 않습니다.
 
 외부 연결을 빠르게 시험하려면 **임시 HTTPS 시작**을 누릅니다. 고정 주소가 필요하면 **고정 도메인**에서 Named Tunnel을 구성한 뒤 **고정 도메인 시작**을 사용합니다.
 

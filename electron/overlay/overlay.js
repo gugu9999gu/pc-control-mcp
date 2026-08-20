@@ -53,13 +53,25 @@ function operationScope(tool) {
 function updateStatus(next) {
   status = next;
   const online = Boolean(next.server?.running);
-  $('#serverHud').classList.toggle('online', online);
+  const connectionCode = online ? next.connectionState?.status || 'disconnected' : 'offline';
+  const connection = {
+    offline: ['MCP CONTROL OFFLINE', '서버 꺼짐'],
+    disconnected: ['AI NOT CONNECTED', '웹 GPT/플러그인 연결 감지 안 됨'],
+    pairing: ['PAIRING IN PROGRESS', 'OAuth 승인 또는 토큰 교환 대기'],
+    authorized: ['AI CONNECTED · IDLE', '인증 유지 중 · MCP 도구 호출 대기'],
+    connected: ['LIVE MCP CONNECTION', '연동된 AI가 이 PC와 통신 중']
+  }[connectionCode] || ['AI NOT CONNECTED', '연결 감지 안 됨'];
+  const serverHud = $('#serverHud');
+  serverHud.classList.toggle('online', online);
+  for (const code of ['offline', 'disconnected', 'pairing', 'authorized', 'connected']) {
+    serverHud.classList.toggle(`connection-${code}`, connectionCode === code);
+  }
   $('#hudMode').textContent = String(next.mode || 'LOCAL').toUpperCase();
   $('#hudProfile').textContent = String(next.profile || 'safe').toUpperCase();
-  $('#hudState').textContent = online ? 'AI CONTROL READY' : 'MCP CONTROL OFFLINE';
+  $('#hudState').textContent = connection[0];
   const sessions = next.activeSessions || [];
   const connectors = (next.connectors || []).filter(item => item.client_name !== 'local OAuth verification' && item.connected !== false);
-  $('#hudAgent').textContent = sessions.at(-1)?.client_name || connectors[0]?.client_name || '연결 대기 중';
+  $('#hudAgent').textContent = sessions.at(-1)?.client_name || next.connectionState?.client_name || connectors[0]?.client_name || connection[1];
   const primary = next.display?.primary?.bounds;
   const virtual = next.display?.virtual;
   if (primary && virtual) {

@@ -205,7 +205,11 @@ body[data-server="online"] .state-chip span { background: var(--cyan); box-shado
 .telemetry-card span { color: #57706e; font: 700 8px Consolas, monospace; letter-spacing: .12em; }
 .telemetry-card strong { margin: 7px 0 3px; font: 600 24px Consolas, monospace; }
 .telemetry-card small { color: #66817f; font: 8px Consolas, monospace; letter-spacing: .08em; }
-.telemetry-card.accent strong { color: var(--cyan); }
+.telemetry-card.accent strong { color: var(--cyan); font-size: 18px; white-space: nowrap; }
+body[data-connection="offline"] .telemetry-card.accent strong,
+body[data-connection="disconnected"] .telemetry-card.accent strong { color: #758987; }
+body[data-connection="pairing"] .telemetry-card.accent strong { color: var(--violet); animation: pairing-glow 1.5s ease-in-out infinite; }
+body[data-connection="connected"] .telemetry-card.accent strong { text-shadow: 0 0 15px rgba(69, 240, 204, .35); }
 
 .content-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, .8fr); gap: 18px; margin-bottom: 18px; scroll-margin-top: 18px; }
 .live-grid { grid-template-columns: minmax(560px, 1.55fr) minmax(320px, .75fr); }
@@ -257,6 +261,9 @@ body[data-server="online"] .signal-bars i:nth-child(2) { animation-delay: .15s; 
 .agent-presence { display: flex; align-items: center; gap: 13px; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .018); }
 .agent-avatar { display: grid; flex: 0 0 42px; height: 42px; place-items: center; border: 1px solid #405d59; border-radius: 11px; color: #6d8884; background: #0a1517; font: 800 10px Consolas, monospace; }
 body[data-server="online"] .agent-avatar { border-color: rgba(69, 240, 204, .35); color: var(--cyan); box-shadow: inset 0 0 18px rgba(69, 240, 204, .08); }
+body[data-connection="disconnected"] .agent-avatar { border-color: #405d59; color: #6d8884; box-shadow: none; }
+body[data-connection="pairing"] .agent-avatar { border-color: rgba(143, 145, 255, .55); color: #c3c4ff; box-shadow: inset 0 0 18px rgba(143, 145, 255, .12); animation: pulse 1.6s infinite; }
+body[data-connection="connected"] .agent-presence { border-color: rgba(69, 240, 204, .25); }
 .agent-presence small, .agent-presence strong, .agent-presence p { display: block; margin: 0; }
 .agent-presence small, .current-operation small { color: #57716e; font: 700 7px Consolas, monospace; letter-spacing: .12em; }
 .agent-presence strong { overflow: hidden; max-width: 240px; margin-top: 4px; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
@@ -293,6 +300,8 @@ body[data-server="online"] .agent-avatar { border-color: rgba(69, 240, 204, .35)
 .activity-state { justify-self: end; padding: 4px 6px; border-radius: 4px; color: var(--cyan); background: rgba(69, 240, 204, .07); font: 700 7px Consolas, monospace; }
 .activity-row.error .activity-state { color: var(--red); background: rgba(255, 107, 120, .08); }
 .empty-row, .empty-card { padding: 28px; color: #58716f; text-align: center; font-size: 11px; }
+.empty-card.connection-pairing { border: 1px solid rgba(143, 145, 255, .22); border-radius: 9px; color: #b6b7f2; background: rgba(143, 145, 255, .045); }
+.empty-card.connection-disconnected { color: #6f8381; }
 
 .count-badge, .profile-badge, .domain-state { padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; color: #69827f; font: 700 8px Consolas, monospace; letter-spacing: .09em; }
 .connector-list { display: grid; gap: 9px; }
@@ -381,6 +390,7 @@ footer { display: flex; justify-content: space-between; padding: 14px 2px 0; col
 @keyframes core-orbit { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
 @keyframes radar { to { transform: rotate(360deg); } }
 @keyframes pulse { 50% { opacity: .45; transform: scale(.82); } }
+@keyframes pairing-glow { 50% { color: #c8c9ff; text-shadow: 0 0 16px rgba(143, 145, 255, .5); } }
 @keyframes breathe { 50% { opacity: .42; transform: translate(-50%, -50%) scale(.92); } }
 @keyframes scan { to { top: 110%; } }
 @keyframes bars { to { opacity: .35; transform: scaleY(.55); } }

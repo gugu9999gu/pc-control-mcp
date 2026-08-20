@@ -50,6 +50,7 @@ const eventTitles = {
   mcp_session_started: 'MCP 세션 연결',
   mcp_session_closed: 'MCP 세션 종료',
   oauth_client_registered: 'OAuth 클라이언트 등록',
+  oauth_authorization_started: 'OAuth 페어링 시작',
   oauth_authorization_approved: 'AI 권한 승인',
   oauth_authorization_denied: 'AI 권한 거부',
   oauth_token_issued: 'OAuth 토큰 발급',
@@ -108,17 +109,58 @@ function connectedConnectors(status) {
   return (status.connectors || []).filter(item => item.client_name !== 'local OAuth verification' && item.connected !== false);
 }
 
+const pairingPhaseLabels = {
+  registered: 'AI 클라이언트 등록 감지 · 승인 화면 열림 대기',
+  awaiting_authorization: '브라우저에서 페어링 토큰과 권한 승인 대기',
+  authorization_failed: '페어링 토큰 오류 · 브라우저에서 다시 입력 대기',
+  permission_selection_required: '화면 보기 권한 선택 후 다시 승인 필요',
+  authorization_approved: '권한 승인 완료 · OAuth 토큰 교환 대기',
+  token_exchange_failed: 'OAuth 토큰 교환 실패 · 커넥터 재시도 대기'
+};
+
+function connectionPresentation(status) {
+  const stateCode = status.server?.running ? status.connectionState?.status || 'disconnected' : 'offline';
+  const clientName = status.connectionState?.client_name || null;
+  const phaseText = pairingPhaseLabels[status.connectionState?.pairing_phase] || '웹 GPT/플러그인이 인증 절차를 진행 중입니다.';
+  const sessions = status.activeSessions || [];
+  const values = {
+    offline: {
+      card: '서버 꺼짐', short: 'MCP 서버 오프라인', title: '서버가 대기 중입니다',
+      detail: 'MCP 서버를 시작하면 AI 연결 감지를 시작합니다.', agent: '서버 꺼짐', agentLabel: 'MCP SERVER OFFLINE'
+    },
+    disconnected: {
+      card: '연결 안 됨', short: 'AI CONNECTION NOT DETECTED', title: 'MCP 서버 온라인 · AI 연결 안 됨',
+      detail: '웹 GPT 또는 플러그인의 페어링 요청이 아직 감지되지 않았습니다.', agent: '연결 안 됨', agentLabel: 'NO AI CONNECTION'
+    },
+    pairing: {
+      card: '페어링 중', short: 'PAIRING IN PROGRESS', title: '웹 GPT 페어링 요청을 감지했습니다',
+      detail: phaseText, agent: clientName || '웹 GPT / 플러그인', agentLabel: 'PAIRING REQUEST DETECTED'
+    },
+    authorized: {
+      card: '연결됨', short: 'AI CONNECTED · IDLE', title: 'AI 커넥터 연결됨 · 호출 대기 중',
+      detail: 'OAuth 인증이 유지되고 있으며 다음 MCP 도구 호출을 기다립니다.', agent: clientName || '연결된 AI', agentLabel: 'AUTHORIZED CONNECTOR'
+    },
+    connected: {
+      card: '사용 중', short: 'LIVE MCP CONNECTION', title: '연동된 AI가 이 PC와 통신 중입니다',
+      detail: `${sessions.length}개 MCP 세션에서 실시간 도구 호출을 수신할 수 있습니다.`, agent: clientName || sessions.at(-1)?.client_name || '연결된 AI', agentLabel: 'LIVE AI CONNECTION'
+    }
+  };
+  return { code: stateCode, clientName, phaseText, ...(values[stateCode] || values.disconnected) };
+}
+
 function updateStatus(status) {
   state.status = status;
   const online = Boolean(status.server?.running);
+  const connection = connectionPresentation(status);
   document.body.dataset.server = online ? 'online' : 'offline';
-  $('#appVersion').textContent = `v${status.appVersion || '0.2.3'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
+  document.body.dataset.connection = connection.code;
+  $('#appVersion').textContent = `v${status.appVersion || '0.2.4'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
   $('#sideServerState').textContent = online ? 'ONLINE' : status.server?.processDetected ? 'STARTING' : 'OFFLINE';
   $('#heroState').textContent = online ? 'MCP CORE ONLINE' : status.server?.processDetected ? 'MCP CORE STARTING' : 'MCP CORE OFFLINE';
-  $('#heroTitle').textContent = online ? '이 PC가 AI 도구 호출을 수신 중입니다' : '서버가 대기 중입니다';
+  $('#heroTitle').textContent = connection.title;
   $('#heroDescription').textContent = online
-    ? `${modeLabel(status.mode)} 모드 · OAuth 및 도구 권한 정책 적용${status.settings?.lanDirectEnabled ? ' · LAN IP 병행 수신' : ''}.`
-    : '실행 방식을 선택하면 OAuth 보호 MCP 서버와 외부 터널을 함께 시작합니다.';
+    ? `${connection.detail} · ${modeLabel(status.mode)}${status.settings?.lanDirectEnabled ? ' · LAN IP 병행 수신' : ''}`
+    : connection.detail;
   $('#currentModeLabel').textContent = modeLabel(status.mode);
   $('#mcpUrl').textContent = status.mcpUrl || '아직 생성된 MCP URL이 없습니다';
   $('#lanMcpUrl').textContent = status.lanMcpUrl || (status.lanIp ? `대기 중 · http://${status.lanIp}:8787/mcp` : '사용 가능한 LAN IPv4를 찾지 못했습니다');
@@ -127,8 +169,8 @@ function updateStatus(status) {
   $('#tunnelPid').textContent = status.tunnel?.pid || '—';
   $('#tunnelHealth').textContent = status.tunnel?.running ? 'CONNECTED' : status.mode === 'lan' && online ? 'LAN DIRECT' : 'DISCONNECTED';
   const connectors = connectedConnectors(status);
-  $('#activeAiCount').textContent = connectors.length;
-  $('#activeSessionCount').textContent = `${(status.activeSessions || []).length} LIVE SESSIONS`;
+  $('#activeAiCount').textContent = connection.card;
+  $('#activeSessionCount').textContent = connection.short;
   $('#footerStatus').textContent = online ? `${modeLabel(status.mode)} / PID ${status.server.pid}` : 'LOCAL ENGINE STANDBY';
   $('#startQuick').disabled = state.busy || online;
   $('#startNamed').disabled = state.busy || online || !status.namedTunnel;
@@ -160,7 +202,7 @@ function updateStatus(status) {
     $('#domainState').classList.remove('good');
   }
 
-  renderConnectors(connectors, status.activeSessions || []);
+  renderConnectors(connectors, status.activeSessions || [], connection);
   updateCurrentAgent(status);
   if (status.settings?.previewAutoStart && !state.previewAutoAttempted) {
     state.previewAutoAttempted = true;
@@ -168,14 +210,20 @@ function updateStatus(status) {
   }
 }
 
-function renderConnectors(connectors, sessions) {
+function renderConnectors(connectors, sessions, connection) {
   const list = $('#connectorList');
   $('#connectorCount').textContent = `${connectors.length} CONNECTOR${connectors.length === 1 ? '' : 'S'}`;
   list.replaceChildren();
   if (!connectors.length) {
     const empty = document.createElement('div');
-    empty.className = 'empty-card';
-    empty.textContent = state.status?.server?.running ? '아직 승인된 외부 AI 커넥터가 없습니다.' : '서버가 실행되면 승인된 AI와 권한이 표시됩니다.';
+    empty.className = `empty-card connection-${connection.code}`;
+    empty.textContent = connection.code === 'pairing'
+      ? `${connection.agent} 페어링 중 · ${connection.phaseText}`
+      : connection.code === 'disconnected'
+        ? '연결이 감지되지 않았습니다. 웹 GPT/플러그인에서 MCP URL을 등록해 주세요.'
+        : connection.code === 'offline'
+          ? '서버가 실행되면 승인된 AI와 권한이 표시됩니다.'
+          : '인증된 외부 AI 커넥터 정보를 불러오는 중입니다.';
     list.append(empty);
     return;
   }
@@ -216,9 +264,17 @@ function updateCurrentAgent(status) {
   const sessions = status.activeSessions || [];
   const connectors = connectedConnectors(status);
   const current = sessions.at(-1);
-  const name = current?.client_name || connectors[0]?.client_name;
-  $('#currentAgent').textContent = name || '연결 대기 중';
-  $('#currentAgentMeta').textContent = name ? `${sessions.length}개 MCP 세션 활성 · ${status.profile.toUpperCase()} 로컬 정책` : '활성 MCP 세션 없음';
+  const connection = connectionPresentation(status);
+  const name = current?.client_name || connection.agent || connectors[0]?.client_name;
+  $('#currentAgentLabel').textContent = connection.agentLabel;
+  $('#currentAgent').textContent = name;
+  $('#currentAgentMeta').textContent = connection.code === 'connected'
+    ? `${sessions.length}개 MCP 세션 활성 · ${status.profile.toUpperCase()} 로컬 정책`
+    : connection.code === 'authorized'
+      ? `연결됨 · MCP 도구 호출 대기 · ${status.profile.toUpperCase()} 로컬 정책`
+      : connection.code === 'pairing'
+        ? connection.phaseText
+        : connection.detail;
 }
 
 function activityKind(entry) {
