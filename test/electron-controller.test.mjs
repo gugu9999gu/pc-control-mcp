@@ -66,20 +66,23 @@ test('audit watcher emits single-line lifecycle appends without dropping the fir
 test('server boots with an Electron-managed external data directory', async () => {
   const dataDir = await mkdtemp(join(tmpdir(), 'remote-mcp-electron-test-'));
   const port = 18877;
+  const childEnv = {
+    ...process.env,
+    MCP_DATA_DIR: dataDir,
+    MCP_CONTROL_SCRIPT: join(ROOT, 'scripts', 'windows-control.ps1'),
+    MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`,
+    MCP_PORT: String(port)
+  };
+  delete childEnv.MCP_HOST;
   const child = spawn(process.execPath, [join(ROOT, 'src', 'server.mjs')], {
     cwd: ROOT,
     windowsHide: true,
-    env: {
-      ...process.env,
-      MCP_DATA_DIR: dataDir,
-      MCP_CONTROL_SCRIPT: join(ROOT, 'scripts', 'windows-control.ps1'),
-      MCP_PUBLIC_BASE_URL: `http://127.0.0.1:${port}`,
-      MCP_HOST: '127.0.0.1',
-      MCP_PORT: String(port)
-    },
+    env: childEnv,
     stdio: ['ignore', 'pipe', 'pipe']
   });
+  let stdout = '';
   let stderr = '';
+  child.stdout.on('data', chunk => { stdout += chunk.toString(); });
   child.stderr.on('data', chunk => { stderr += chunk.toString(); });
   try {
     const deadline = Date.now() + 15_000;
@@ -92,6 +95,7 @@ test('server boots with an Electron-managed external data directory', async () =
       await new Promise(resolvePromise => setTimeout(resolvePromise, 200));
     }
     assert.equal(health?.ok, true, stderr);
+    assert.match(stdout, new RegExp(`Listening on http://127\\.0\\.0\\.1:${port}`));
     assert.match(await readFile(join(dataDir, 'bootstrap-token.txt'), 'utf8'), /^[A-Za-z0-9_-]{40,}/);
     assert.match(await readFile(join(dataDir, 'local-admin-token.txt'), 'utf8'), /^[A-Za-z0-9_-]{40,}/);
   } finally {

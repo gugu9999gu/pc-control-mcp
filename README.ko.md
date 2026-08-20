@@ -6,12 +6,12 @@ Windows PC를 OAuth로 보호된 MCP 서버로 연결해 AI가 화면을 확인�
 
 ## 빠른 시작
 
-GitHub Releases에서 `Remote-MCP-Control-0.2.0-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
+GitHub Releases에서 `Remote-MCP-Control-0.2.1-x64.exe`를 내려받아 실행하거나, 소스 코드를 받은 뒤 아래 파일을 더블클릭합니다.
 
 현재 포터블 빌드는 Authenticode 상용 코드서명이 없어 Windows SmartScreen에 알 수 없는 게시자 경고가 나타날 수 있습니다. 반드시 이 저장소의 Releases에서만 내려받고, 같은 릴리스의 `SHA256SUMS.txt`와 파일의 SHA-256 값을 비교하십시오. 값이 다르면 실행하지 마십시오. 이 경고를 없애려면 향후 신뢰할 수 있는 Windows 코드서명 인증서가 필요합니다.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.0-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.1-x64.exe
 ```
 
 ```text

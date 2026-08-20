@@ -27,7 +27,7 @@ const POWER_SHELL = process.env.SystemRoot
   ? join(process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
   : 'powershell.exe';
 
-const HOST = process.env.MCP_HOST || '0.0.0.0';
+const HOST = process.env.MCP_HOST || '127.0.0.1';
 const PORT = Number.parseInt(process.env.MCP_PORT || '8787', 10);
 const BASE_URL = new URL(process.env.MCP_PUBLIC_BASE_URL || `http://localhost:${PORT}`);
 const RESOURCE_IDENTIFIER = BASE_URL.origin;
@@ -1317,7 +1317,7 @@ function inputGuard() {
 }
 
 function createMcpServer(context) {
-  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.0' });
+  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.1' });
   const securitySchemes = [{ type: 'oauth2', scopes: OAUTH_SCOPES }];
   const desktopOwner = desktopOwnerFromContext(context);
   const jobOwner = jobOwnerFromContext(context);

@@ -329,17 +329,23 @@ function Revoke-ConnectorConnection {
 }
 
 function Start-Server {
-    param([string]$PublicBaseUrl)
+    param(
+        [string]$PublicBaseUrl,
+        [string]$BindHost = '127.0.0.1'
+    )
     $node = (Get-Command node.exe -ErrorAction Stop).Source
     $oldPublic = [Environment]::GetEnvironmentVariable('MCP_PUBLIC_BASE_URL', 'Process')
     $oldDisable = [Environment]::GetEnvironmentVariable('MCP_DISABLE_INPUT', 'Process')
+    $oldHost = [Environment]::GetEnvironmentVariable('MCP_HOST', 'Process')
     $env:MCP_PUBLIC_BASE_URL = $PublicBaseUrl.TrimEnd('/')
+    $env:MCP_HOST = $BindHost
     if ($DisableInput) { $env:MCP_DISABLE_INPUT = '1' } else { Remove-Item Env:MCP_DISABLE_INPUT -ErrorAction SilentlyContinue }
     try {
         $process = Start-Process -FilePath $node -ArgumentList @('src/server.mjs') -WorkingDirectory $ProjectRoot -WindowStyle Hidden -RedirectStandardOutput $ServerStdout -RedirectStandardError $ServerStderr -PassThru
     } finally {
         if ($null -eq $oldPublic) { Remove-Item Env:MCP_PUBLIC_BASE_URL -ErrorAction SilentlyContinue } else { $env:MCP_PUBLIC_BASE_URL = $oldPublic }
         if ($null -eq $oldDisable) { Remove-Item Env:MCP_DISABLE_INPUT -ErrorAction SilentlyContinue } else { $env:MCP_DISABLE_INPUT = $oldDisable }
+        if ($null -eq $oldHost) { Remove-Item Env:MCP_HOST -ErrorAction SilentlyContinue } else { $env:MCP_HOST = $oldHost }
     }
     Set-Content -LiteralPath $ServerPidFile -Value $process.Id -Encoding ascii
     return $process
@@ -446,7 +452,7 @@ function Start-LanMcp {
     Stop-RecordedProcess $TunnelPidFile 'previous launcher tunnel' 'cloudflared'
     Stop-DiscoveredProjectProcesses
     Assert-PortAvailable
-    $server = Start-Server $lanBaseUrl
+    $server = Start-Server $lanBaseUrl '0.0.0.0'
     if (-not (Wait-ForHttp "$LocalBaseUrl/healthz" 30)) {
         Stop-RecordedProcess $ServerPidFile 'server' 'node'
         $detail = Get-LogExcerpt $ServerStderr
@@ -724,7 +730,8 @@ function Restart-ServerForPolicy {
     }
     Start-Sleep -Milliseconds 500
     Assert-PortAvailable
-    $server = Start-Server $public
+    $bindHost = if ($public -match '^http://' -and $public -notmatch '^http://(127\.0\.0\.1|localhost)(:|/)') { '0.0.0.0' } else { '127.0.0.1' }
+    $server = Start-Server $public $bindHost
     if (-not (Wait-ForHttp "$LocalBaseUrl/healthz" 30)) {
         Stop-RecordedProcess $ServerPidFile 'server' 'node'
         $detail = Get-LogExcerpt $ServerStderr

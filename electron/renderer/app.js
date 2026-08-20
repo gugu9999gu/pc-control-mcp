@@ -112,7 +112,7 @@ function updateStatus(status) {
   state.status = status;
   const online = Boolean(status.server?.running);
   document.body.dataset.server = online ? 'online' : 'offline';
-  $('#appVersion').textContent = `v${status.appVersion || '0.2.0'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
+  $('#appVersion').textContent = `v${status.appVersion || '0.2.1'}${status.packaged ? ' · PORTABLE' : ' · SOURCE'}`;
   $('#sideServerState').textContent = online ? 'ONLINE' : status.server?.processDetected ? 'STARTING' : 'OFFLINE';
   $('#heroState').textContent = online ? 'MCP CORE ONLINE' : status.server?.processDetected ? 'MCP CORE STARTING' : 'MCP CORE OFFLINE';
   $('#heroTitle').textContent = online ? '이 PC가 AI 도구 호출을 수신 중입니다' : '서버가 대기 중입니다';
