@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; object-src 'none'; base-uri 'none'">
+  <title>MCP control overlay</title>
+  <link rel="stylesheet" href="overlay.css">
+</head>
+<body data-phase="idle">
+  <div class="environment-frame" id="environmentFrame" aria-hidden="true">
+    <i class="edge edge-top"></i><i class="edge edge-right"></i><i class="edge edge-bottom"></i><i class="edge edge-left"></i>
+    <div class="corner corner-tl"><span></span></div><div class="corner corner-tr"><span></span></div>
+    <div class="corner corner-bl"><span></span></div><div class="corner corner-br"><span></span></div>
+    <div class="environment-scan"></div>
+    <span class="environment-label" id="environmentLabel">REMOTE INPUT ENVIRONMENT</span>
+  </div>
+
+  <section class="control-rail" id="controlRail" aria-live="polite">
+    <div class="rail-heading">
+      <span class="live-pill" id="phasePill"><i></i><b id="phaseLabel">LIVE</b></span>
+      <span class="rail-code" id="operationScope">REMOTE INPUT</span>
+    </div>
+    <div class="rail-operation">
+      <div class="operation-glyph" id="operationGlyph">⌖</div>
+      <div class="operation-copy">
+        <strong id="operationTitle">AI가 컴퓨터를 조작 중입니다</strong>
+        <p id="operationDetail">도구 호출을 준비하고 있습니다.</p>
+      </div>
+    </div>
+    <div class="rail-footer">
+      <span class="agent-mark" id="operationAgentBadge">AI</span>
+      <b id="operationAgentName">연결된 AI</b>
+      <span class="rail-timer" id="operationTimer">00.0s</span>
+    </div>
+    <div class="rail-progress"><span></span></div>
+  </section>
+
+  <div class="server-hud" id="serverHud">
+    <div class="hud-core"><i></i><span></span></div>
+    <div class="server-copy">
+      <small>REMOTE MCP · <span id="hudMode">LOCAL</span></small>
+      <strong id="hudState">MCP CONTROL OFFLINE</strong>
+      <p id="hudAgent">연결 대기 중</p>
+    </div>
+    <span class="profile-chip" id="hudProfile">SAFE</span>
+  </div>
+
+  <div class="trail-layer" id="trailLayer" aria-hidden="true"></div>
+  <div class="ai-pointer" id="aiPointer" aria-hidden="true">
+    <div class="target-reticle"><i></i><i></i></div>
+    <div class="pointer-wave"></div>
+    <svg viewBox="0 0 46 57"><path d="M4 3 39 33l-16 1 9 17-10 5-9-18-10 12z"/></svg>
+    <div class="pointer-tag">
+      <span>AI</span><b id="pointerAction">MOVE</b><em id="pointerButton">POINTER</em>
+    </div>
+    <small class="pointer-coordinates" id="pointerCoordinates">0 · 0</small>
+    <div class="scroll-indicator"><i></i><i></i></div>
+  </div>
+
+  <section class="message-hud" id="messageHud" aria-live="polite">
+    <header class="message-heading">
+      <div class="message-heading-copy">
+        <span class="message-orbit"><i></i></span>
+        <div><small>AI OPERATION BRIEF</small><b id="messageAgent">연결된 AI</b></div>
+      </div>
+      <span class="message-phase" id="messagePhase">WORKING</span>
+    </header>
+    <div class="message-main">
+      <strong id="messageTitle">AI 작업 진행 상황</strong>
+      <p id="messageBody">연결된 AI가 작업을 준비하고 있습니다.</p>
+      <div class="message-target"><span>TARGET</span><b id="messageTarget">WINDOWS DESKTOP</b></div>
+      <div class="message-progress"><i id="messageProgress"></i></div>
+    </div>
+    <div class="message-log" id="messageLog" aria-label="최근 실행 로그"></div>
+    <footer class="message-footer">
+      <span>공개 작업 요약 + 실제 도구 로그</span>
+      <b>내부 사고 · 키 입력 · 비밀정보 비표시</b>
+    </footer>
+  </section>
+
+  <div class="input-hud" id="inputHud" aria-hidden="true">
+    <div class="key-grid"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="input-copy"><small>REMOTE KEYBOARD · PRIVATE</small><strong id="inputLabel">AI INPUT</strong><p>입력 내용은 HUD와 로그에 저장되지 않습니다</p></div>
+    <span class="input-state" id="inputState">LIVE</span>
+  </div>
+
+  <div class="safety-hud" id="safetyHud">
+    <i></i><b>LOCAL VISUAL SAFETY LAYER</b><span>AI 입력 표시 중 · 이 HUD는 네트워크로 전송되지 않음</span>
+  </div>
+
+  <script src="overlay.js"></script>
+</body>
+</html>

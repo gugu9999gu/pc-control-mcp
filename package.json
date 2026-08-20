@@ -1,0 +1,50 @@
+{
+  "name": "codex-remote-mcp-control",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "description": "Authenticated Streamable HTTP MCP server for safe Windows desktop control.",
+  "main": "electron/main.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "app": "electron electron/main.mjs",
+    "app:smoke": "electron electron/main.mjs --smoke-test",
+    "app:dist": "electron-builder --win portable",
+    "verify:hud": "node scripts/verify-hud.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "electron": "43.4.1",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "local.openai.remote-mcp-control",
+    "productName": "Remote MCP Control",
+    "artifactName": "Remote-MCP-Control-${version}-${arch}.${ext}",
+    "asar": true,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/**/*",
+      "src/**/*",
+      "package.json",
+      "!electron/**/*.map"
+    ],
+    "extraResources": [
+      {
+        "from": "scripts/windows-control.ps1",
+        "to": "server-scripts/windows-control.ps1"
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    }
+  }
+}

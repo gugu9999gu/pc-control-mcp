@@ -1,0 +1,241 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src 'self' blob:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'">
+  <title>Remote MCP Control</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body data-server="offline">
+  <div class="ambient ambient-a"></div>
+  <div class="ambient ambient-b"></div>
+
+  <header class="titlebar">
+    <div class="titlebar-drag">
+      <div class="mini-mark"><span></span></div>
+      <strong>REMOTE MCP CONTROL</strong>
+      <span class="build-tag" id="appVersion">DESKTOP CORE</span>
+    </div>
+  </header>
+
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">
+          <span class="brand-orbit orbit-one"></span>
+          <span class="brand-orbit orbit-two"></span>
+          <span class="brand-core"></span>
+        </div>
+        <div>
+          <p>WINDOWS NODE</p>
+          <h1>MCP CONTROL</h1>
+        </div>
+      </div>
+
+      <nav class="nav-list" aria-label="화면 이동">
+        <button class="nav-item active" data-target="overview"><span>01</span>관제 센터</button>
+        <button class="nav-item" data-target="live-view"><span>02</span>라이브 화면</button>
+        <button class="nav-item" data-target="activity"><span>03</span>실행 로그</button>
+        <button class="nav-item" data-target="connections"><span>04</span>AI 연결</button>
+        <button class="nav-item" data-target="fixed-domain"><span>05</span>고정 도메인</button>
+        <button class="nav-item" data-target="permissions"><span>06</span>권한 정책</button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="mini-status">
+          <span class="status-light"></span>
+          <div><small>LOCAL ENGINE</small><strong id="sideServerState">OFFLINE</strong></div>
+        </div>
+        <button class="ghost-button full" id="openDataFolder">로그 폴더 열기</button>
+      </div>
+    </aside>
+
+    <main class="workspace">
+      <section class="topline" id="overview">
+        <div>
+          <p class="eyebrow">DESKTOP OPERATIONS / <span id="currentModeLabel">STANDBY</span></p>
+          <h2>이 컴퓨터의 AI 제어를 한눈에.</h2>
+        </div>
+        <div class="top-actions">
+          <button class="icon-button" id="copyToken" title="페어링 토큰 복사">TOKEN</button>
+          <button class="icon-button" id="copyUrl" title="MCP URL 복사">COPY URL</button>
+          <button class="primary-button compact" id="openChatGpt">ChatGPT 열기</button>
+        </div>
+      </section>
+
+      <section class="command-deck panel">
+        <div class="core-visual" aria-hidden="true">
+          <div class="core-grid"></div>
+          <div class="core-ring ring-outer"></div>
+          <div class="core-ring ring-mid"></div>
+          <div class="core-ring ring-inner"></div>
+          <div class="core-node"><span></span></div>
+          <div class="core-sweep"></div>
+        </div>
+
+        <div class="command-copy">
+          <div class="state-chip"><span></span><b id="heroState">MCP CORE OFFLINE</b></div>
+          <h3 id="heroTitle">서버가 대기 중입니다</h3>
+          <p id="heroDescription">실행 방식을 선택하면 OAuth 보호 MCP 서버와 외부 터널을 함께 시작합니다.</p>
+          <div class="url-strip">
+            <span>ENDPOINT</span>
+            <code id="mcpUrl">아직 생성된 MCP URL이 없습니다</code>
+            <button id="inlineCopyUrl" aria-label="URL 복사">복사</button>
+          </div>
+          <div class="command-buttons">
+            <button class="primary-button" id="startQuick"><span class="button-led"></span>임시 HTTPS 시작</button>
+            <button class="secondary-button" id="startNamed">고정 도메인 시작</button>
+            <button class="danger-button" id="stopServer">서버 종료</button>
+          </div>
+        </div>
+
+        <div class="telemetry-stack">
+          <div class="telemetry-card"><span>SERVER PID</span><strong id="serverPid">—</strong><small id="serverHealth">NO SIGNAL</small></div>
+          <div class="telemetry-card"><span>TUNNEL PID</span><strong id="tunnelPid">—</strong><small id="tunnelHealth">DISCONNECTED</small></div>
+          <div class="telemetry-card accent"><span>ACTIVE AI</span><strong id="activeAiCount">0</strong><small id="activeSessionCount">0 LIVE SESSIONS</small></div>
+        </div>
+      </section>
+
+      <section class="content-grid live-grid" id="live-view">
+        <article class="panel preview-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">LIVE DESKTOP</p><h3>실행 중인 화면</h3></div>
+            <div class="panel-actions">
+              <span class="recording-pill" id="previewPill"><i></i>PREVIEW OFF</span>
+              <button class="ghost-button" id="togglePreview">화면 보기</button>
+            </div>
+          </div>
+          <div class="desktop-stage" id="desktopStage">
+            <video id="desktopVideo" muted autoplay playsinline></video>
+            <img id="desktopFrame" alt="기본 모니터 실시간 미리보기">
+            <div class="stage-placeholder" id="stagePlaceholder">
+              <div class="screen-glyph"><span></span></div>
+              <strong>로컬 데스크톱 미리보기</strong>
+              <p>화면 보기 버튼을 누르면 이 PC의 기본 모니터가 표시됩니다.</p>
+            </div>
+            <div class="scanline"></div>
+            <div class="preview-cursor" id="previewCursor" aria-hidden="true">
+              <svg viewBox="0 0 36 44"><path d="M4 3 30 25l-12 2 7 12-7 4-7-13-8 9z"/></svg>
+              <span id="cursorLabel">AI</span>
+            </div>
+            <div class="keyboard-hud" id="keyboardHud"><span>AI INPUT</span><strong id="keyboardLabel">KEYBOARD</strong></div>
+            <div class="stage-corners"><i></i><i></i><i></i><i></i></div>
+            <div class="stage-caption"><span id="screenResolution">PRIMARY DISPLAY</span><b id="lastInputAction">입력 대기</b></div>
+          </div>
+        </article>
+
+        <article class="panel now-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">NOW EXECUTING</p><h3>AI 작업 상태</h3></div>
+            <span class="signal-bars"><i></i><i></i><i></i><i></i></span>
+          </div>
+          <div class="agent-presence" id="agentPresence">
+            <div class="agent-avatar">AI</div>
+            <div><small>CONNECTED OPERATOR</small><strong id="currentAgent">연결 대기 중</strong><p id="currentAgentMeta">활성 MCP 세션 없음</p></div>
+          </div>
+          <div class="current-operation">
+            <div class="operation-icon" id="operationIcon">⌁</div>
+            <div><small>LAST OPERATION</small><strong id="currentOperation">아직 실행된 작업이 없습니다</strong><p id="currentOperationDetail">도구 호출이 발생하면 이곳에 표시됩니다.</p></div>
+          </div>
+          <div class="operation-meter"><span id="operationMeter"></span></div>
+          <div class="privacy-note"><b>PRIVACY GUARD</b><p>키보드 입력 내용은 로그나 화면에 저장하지 않고 글자 수와 동작만 표시합니다.</p></div>
+        </article>
+      </section>
+
+      <section class="panel activity-panel" id="activity">
+        <div class="panel-head">
+          <div><p class="eyebrow">REAL-TIME AUDIT STREAM</p><h3>AI 실행 로그</h3></div>
+          <div class="filter-row">
+            <button class="filter active" data-filter="all">전체</button>
+            <button class="filter" data-filter="input">입력</button>
+            <button class="filter" data-filter="observe">관찰</button>
+            <button class="filter" data-filter="system">시스템</button>
+            <button class="filter" data-filter="error">오류</button>
+          </div>
+        </div>
+        <div class="log-header"><span>TIME</span><span>OPERATOR</span><span>ACTION</span><span>DETAIL</span><span>STATE</span></div>
+        <div class="activity-list" id="activityList">
+          <div class="empty-row">서버 활동을 기다리고 있습니다.</div>
+        </div>
+      </section>
+
+      <section class="content-grid" id="connections">
+        <article class="panel connections-panel">
+          <div class="panel-head">
+            <div><p class="eyebrow">AUTHORIZED CONNECTORS</p><h3>연동된 AI</h3></div>
+            <span class="count-badge" id="connectorCount">0 CONNECTORS</span>
+          </div>
+          <div class="connector-list" id="connectorList">
+            <div class="empty-card">서버가 실행되면 승인된 AI와 권한이 표시됩니다.</div>
+          </div>
+        </article>
+        <article class="panel token-panel">
+          <div class="panel-head"><div><p class="eyebrow">AUTH LIFECYCLE</p><h3>인증 상태</h3></div></div>
+          <div class="token-lifetime"><span>ACCESS TOKEN</span><strong id="accessTtl">—</strong><small>자동 갱신 전 유효기간</small></div>
+          <div class="token-lifetime"><span>REFRESH TOKEN</span><strong id="refreshTtl">—</strong><small>재인증 없이 갱신 가능</small></div>
+          <button class="secondary-button full" id="copyPairingToken">페어링 토큰 복사</button>
+        </article>
+      </section>
+
+      <section class="panel domain-panel" id="fixed-domain">
+        <div class="panel-head">
+          <div><p class="eyebrow">PERSISTENT ENDPOINT</p><h3>고정 MCP 도메인</h3></div>
+          <span class="domain-state" id="domainState">NOT CONFIGURED</span>
+        </div>
+        <div class="domain-layout">
+          <div class="domain-explainer">
+            <div class="domain-route">
+              <div><span>01</span><b>이 PC</b><small>127.0.0.1:8787</small></div><i></i>
+              <div><span>02</span><b>Named Tunnel</b><small>암호화 연결</small></div><i></i>
+              <div><span>03</span><b>고정 URL</b><small id="savedDomainText">mcp.example.com</small></div>
+            </div>
+            <p>Cloudflare 계정에 활성화된 본인 도메인이 필요합니다. 앱이 Tunnel 생성, DNS 연결, 실행 토큰 암호화를 처리하며 기존 DNS 레코드는 덮어쓰지 않습니다.</p>
+            <div class="cloudflare-status" id="cloudflareStatus"><span></span><b>Cloudflare 상태 확인 전</b></div>
+            <div class="domain-action-row">
+              <button class="secondary-button" id="checkCloudflare">계정 상태 확인</button>
+              <button class="ghost-button" id="loginCloudflare">브라우저 로그인</button>
+            </div>
+          </div>
+          <form class="domain-form" id="domainForm">
+            <label>터널 이름<input id="tunnelName" name="tunnelName" autocomplete="off" placeholder="remote-mcp-admin-pc" pattern="[A-Za-z0-9][A-Za-z0-9-]{1,62}" required></label>
+            <label>고정 HTTPS 주소<input id="domainUrl" name="domainUrl" type="url" autocomplete="off" placeholder="https://mcp.example.com" required></label>
+            <label class="checkbox-line"><input id="useExistingTunnel" type="checkbox"><span>같은 이름의 기존 Tunnel 사용</span></label>
+            <button class="primary-button full" type="submit">Tunnel + DNS 자동 구성</button>
+            <details>
+              <summary>이미 만든 Tunnel을 수동 등록</summary>
+              <label>실행 토큰<textarea id="manualTunnelToken" rows="3" spellcheck="false" placeholder="Cloudflare Tunnel token"></textarea></label>
+              <button class="ghost-button full" type="button" id="saveManualTunnel">URL과 토큰 저장</button>
+            </details>
+          </form>
+        </div>
+      </section>
+
+      <section class="content-grid permissions-grid" id="permissions">
+        <article class="panel profile-panel">
+          <div class="panel-head"><div><p class="eyebrow">LOCAL ENFORCEMENT</p><h3>컴퓨터 제어 권한</h3></div><span class="profile-badge" id="profileBadge">AGENT</span></div>
+          <div class="profile-options">
+            <button class="profile-option" data-profile="safe"><span>SAFE</span><b>관찰 전용</b><p>화면·상태·프로세스 조회만 허용</p></button>
+            <button class="profile-option active" data-profile="agent"><span>AGENT</span><b>AI 작업</b><p>마우스·키보드와 Codex/Claude 허용</p></button>
+            <button class="profile-option" data-profile="full"><span>FULL</span><b>전체 자동화</b><p>허용된 CLI와 프로세스 조작 포함</p></button>
+          </div>
+        </article>
+        <article class="panel overlay-panel">
+          <div class="panel-head"><div><p class="eyebrow">VISUAL SAFETY LAYER</p><h3>조작 오버레이</h3></div></div>
+          <label class="switch-row"><div><b>바탕화면 AI 커서 표시</b><p>AI가 클릭·드래그·키보드를 사용할 때 투명 HUD를 표시합니다.</p></div><input id="overlayToggle" type="checkbox"><span class="switch"></span></label>
+          <label class="switch-row"><div><b>앱 실행 시 화면 미리보기</b><p>대시보드가 열리면 기본 모니터 미리보기를 시작합니다.</p></div><input id="previewAutoToggle" type="checkbox"><span class="switch"></span></label>
+          <button class="secondary-button full hud-preview-button" type="button" id="hudPreview">AI 조작 HUD 미리보기</button>
+          <div class="safety-strip"><span>LOCAL ONLY</span>오버레이 UI는 네트워크로 전송되지 않으며 이 PC에서만 렌더링됩니다.</div>
+        </article>
+      </section>
+
+      <footer><span>REMOTE MCP CONTROL / WINDOWS</span><span id="footerStatus">LOCAL ENGINE STANDBY</span></footer>
+    </main>
+  </div>
+
+  <div class="toast-stack" id="toastStack" aria-live="polite"></div>
+  <div class="busy-cover" id="busyCover"><div class="busy-core"><i></i><i></i><span></span></div><strong id="busyLabel">작업 처리 중</strong><p>서버와 터널 상태를 안전하게 변경하고 있습니다.</p></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
