@@ -240,7 +240,7 @@ if (process.env.VERIFY_COORDINATION === '1' && capabilities.profile !== 'safe' &
     headers: mcpHeaders,
     body: JSON.stringify({
       jsonrpc: '2.0', id: 400, method: 'initialize', params: {
-        protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'verify-oauth-peer', version: '0.2.1' }
+        protocolVersion: '2025-11-25', capabilities: {}, clientInfo: { name: 'verify-oauth-peer', version: '0.2.2' }
       }
     })
   });

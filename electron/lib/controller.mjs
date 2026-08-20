@@ -239,7 +239,7 @@ export class McpController extends EventEmitter {
   }
 
   isServerRecord(record) {
-    return /(?:^|[\\/])src[\\/]server\.mjs(?:"|\s|$)/i.test(String(record?.CommandLine || ''));
+    return /(?:^|[\s"'\\/])src[\\/]server\.mjs(?:[\s"']|$)/i.test(String(record?.CommandLine || ''));
   }
 
   isTunnelRecord(record) {

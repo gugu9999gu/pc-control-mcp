@@ -17,6 +17,13 @@ test('fixed-domain values are normalized and unsafe quick URLs are rejected', ()
   assert.throws(() => validators.normalizeTunnelName('한글 이름'), /영문/);
 });
 
+test('controller recognizes servers launched with relative and absolute entry paths', () => {
+  const recognizes = McpController.prototype.isServerRecord;
+  assert.equal(recognizes.call({}, { CommandLine: '"C:\\Program Files\\nodejs\\node.exe" src/server.mjs' }), true);
+  assert.equal(recognizes.call({}, { CommandLine: 'electron.exe C:\\work\\remote-mcp-control\\src\\server.mjs' }), true);
+  assert.equal(recognizes.call({}, { CommandLine: 'node.exe src/server-other.mjs' }), false);
+});
+
 test('HUD activity lifecycle metadata is retained without leaking secret fields', () => {
   const safe = validators.sanitizeActivity({
     timestamp: '2026-08-20T00:00:00.000Z',

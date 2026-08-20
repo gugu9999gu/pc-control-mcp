@@ -6,12 +6,12 @@ This project exposes an allowlisted Windows desktop-control MCP server over Stre
 
 ## Quick start
 
-Download the portable `Remote-MCP-Control-0.2.1-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
+Download the portable `Remote-MCP-Control-0.2.2-x64.exe` from the repository's Releases page, or clone the source and double-click the Electron launcher:
 
 The portable build is not Authenticode-signed. Windows SmartScreen can therefore show an unknown-publisher warning. Download it only from this repository's release, compare its SHA-256 value with `SHA256SUMS.txt` on the same release, and do not run it if the values differ. A future release needs a trusted Windows code-signing certificate to remove this warning.
 
 ```powershell
-Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.1-x64.exe
+Get-FileHash -Algorithm SHA256 .\Remote-MCP-Control-0.2.2-x64.exe
 ```
 
 ```text

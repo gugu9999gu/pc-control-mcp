@@ -1317,7 +1317,7 @@ function inputGuard() {
 }
 
 function createMcpServer(context) {
-  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.1' });
+  const server = new McpServer({ name: 'codex-windows-remote-control', version: '0.2.2' });
   const securitySchemes = [{ type: 'oauth2', scopes: OAUTH_SCOPES }];
   const desktopOwner = desktopOwnerFromContext(context);
   const jobOwner = jobOwnerFromContext(context);
